@@ -1,10 +1,10 @@
 # PitchPro
 
-PitchPro is a cross-platform football tournament manager built with Expo SDK 58, React Native, TypeScript, Expo Router, Supabase, and EAS. It includes authenticated tournament and team workflows, tested double round-robin and standings rules, owner-only result/final operations, read-only invitations, activity and in-app notifications, and a persisted champion view.
+PitchPro is a cross-platform football tournament manager built with Expo SDK 58, React Native, TypeScript, Expo Router, Supabase, and EAS. It includes authenticated tournament and team workflows, tested double round-robin and standings rules, owner-only result/final operations, read-only invitations, a tournament activity feed, and a persisted champion view.
 
 ## Current Status
 
-The mobile application and Supabase schema are implemented, but they are not live until a Supabase project and EAS project are configured. No cloud credentials, store identities, signing keys, or push-provider credentials are included. The Edge Function is ready for deployment; its Database Webhook must be configured before automatic push delivery.
+The mobile application and Supabase schema are implemented, but they are not live until a Supabase project and EAS project are configured. No cloud credentials, store identities, or signing keys are included.
 
 ## Prerequisites
 
@@ -23,7 +23,7 @@ Copy-Item .env.example .env
 npm run start
 ```
 
-Open Expo Go for normal app development. Remote push notifications require a development build; Android Expo Go does not support remote push. Web can be started with `npm run web`.
+Open Expo Go for normal app development. Web can be started with `npm run web`.
 
 ## Environment
 
@@ -31,7 +31,6 @@ The mobile client uses only public Supabase values:
 
 - `EXPO_PUBLIC_SUPABASE_URL`
 - `EXPO_PUBLIC_SUPABASE_KEY` (publishable key; `EXPO_PUBLIC_SUPABASE_ANON_KEY` is also accepted)
-- `EXPO_PUBLIC_EAS_PROJECT_ID` (set after creating/linking the EAS project)
 - `PITCHPRO_ANDROID_PACKAGE` (an identifier you own, for example `com.yourcompany.pitchpro`)
 - `PITCHPRO_IOS_BUNDLE_ID` (an identifier you own)
 
@@ -42,18 +41,18 @@ Never put the Supabase service-role key in `.env`, app config, or the mobile bun
 1. Create a Supabase project and copy its project URL and public anon/publishable key into `.env`.
 2. Install the Supabase CLI and authenticate with `npx supabase login`.
 3. Link this checkout using `npx supabase link --project-ref <your-project-ref>`.
-4. Apply the schema with `npx supabase db push`.
-5. Configure email confirmation and password-reset redirect URLs for `pitchpro://` in Supabase Auth.
-6. Enable Realtime for `fixtures`, `activity_events`, and `notifications` if the project did not apply the publication migration automatically.
+4. This test schema starts from a clean Club-scoped baseline. For the disposable linked test project, run `npx supabase db reset --linked` to drop its existing database objects/data and apply the current migrations. Do not run this against a project whose data you need to keep.
+5. Disable email confirmation in Supabase Auth so new accounts sign in immediately. Configure password-reset redirect URLs for `pitchpro://`.
+6. Enable Realtime for `fixtures` and `activity_events` if the project did not apply the publication migration automatically.
 
 The migration creates private logo buckets and their policies, all application tables, RPCs, RLS, and realtime publication entries. Details are in [Database](docs/DATABASE.md) and [Security](docs/SECURITY.md).
 
-## Push Notifications
+## Legacy Server-side Push Delivery
 
 In-app notifications are persisted in Supabase and work independently of push credentials. To send remote push notifications:
 
 1. Configure FCM v1 credentials for Android and APNs credentials for iOS in EAS.
-2. Set `EXPO_PUBLIC_EAS_PROJECT_ID`, build and install a development build, then opt in under Profile.
+2. Configure push devices through your own trusted administrative process. PitchPro no longer includes an in-app notification screen, device registration, or push opt-in.
 3. Deploy the Edge Function: `npx supabase functions deploy send-tournament-push`.
 4. Set Edge Function secrets `SUPABASE_URL`, `SUPABASE_ANON_KEY`, and `SUPABASE_SERVICE_ROLE_KEY`.
 5. In Supabase Database Webhooks, create an `INSERT` webhook on `public.notifications` targeting `send-tournament-push`. Send `Authorization: Bearer <service-role-key>` as a server-side webhook header. Do not put this key in client code.

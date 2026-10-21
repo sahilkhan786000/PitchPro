@@ -27,9 +27,17 @@ import {
   TextInput,
   View,
 } from "react-native";
+import Animated, {
+  cancelAnimation,
+  interpolate,
+  useAnimatedStyle,
+  useSharedValue,
+  withSpring,
+} from "react-native-reanimated";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { AuthGate } from "@/src/components/AuthGate";
+import { StadiumScene } from "@/src/components/StadiumScene";
 import { TeamCrest } from "@/src/components/TeamCrest";
 import {
   assessFinalEligibility,
@@ -45,7 +53,6 @@ import {
   listActivity,
   removeTournamentTeam,
   saveFixtureResult,
-  scheduleFixture,
   subscribeToTournament,
   type GoalEventInput,
   type TournamentFixture,
@@ -67,6 +74,11 @@ type Confirmation =
   | "final"
   | { kind: "deleteFixture"; fixture: TournamentFixture }
   | { kind: "removeTeam"; team: { id: string; name: string } };
+type GoalCelebrationState = {
+  teamName: string;
+  matchup: string;
+  score: string;
+};
 const sections: Array<{ id: Section; title: string }> = [
   { id: "overview", title: "Overview" },
   { id: "fixtures", title: "Fixtures" },
@@ -95,7 +107,16 @@ function TournamentContent() {
     useState<TournamentFixture | null>(null);
   const [shareVisible, setShareVisible] = useState(false);
   const [confirmation, setConfirmation] = useState<Confirmation | null>(null);
+  const [goalCelebration, setGoalCelebration] =
+    useState<GoalCelebrationState | null>(null);
   const openedFixtureId = useRef<string | null>(null);
+  const scoreSnapshot = useRef<{
+    tournamentId: string;
+    scores: Map<
+      string,
+      { status: TournamentFixture["status"]; home: number | null; away: number | null }
+    >;
+  } | null>(null);
   const queryClient = useQueryClient();
   const query = useQuery({
     queryKey: ["tournament", tournamentId],
@@ -109,6 +130,9 @@ function TournamentContent() {
   });
   const data = query.data;
   const isOwner = data?.tournament.owner_id === session?.user.id;
+  const canEditFixtures = Boolean(
+    isOwner && data?.tournament.status !== "completed",
+  );
   const leagueFixtures =
     data?.fixtures.filter((fixture) => fixture.stage === "league") ?? [];
   const table = useMemo(
@@ -156,6 +180,73 @@ function TournamentContent() {
       void queryClient.invalidateQueries({ queryKey: ["tournaments"] });
     });
   }, [queryClient, tournamentId]);
+
+  useEffect(() => {
+    scoreSnapshot.current = null;
+    setGoalCelebration(null);
+  }, [tournamentId]);
+
+  useEffect(() => {
+    if (!data) return;
+    const previous =
+      scoreSnapshot.current?.tournamentId === tournamentId
+        ? scoreSnapshot.current.scores
+        : null;
+    const scores = new Map(
+      data.fixtures.map((fixture) => [
+        fixture.id,
+        {
+          status: fixture.status,
+          home: fixture.home_score,
+          away: fixture.away_score,
+        },
+      ]),
+    );
+    scoreSnapshot.current = { tournamentId, scores };
+    if (!previous) return;
+
+    const changedFixture = data.fixtures.find((fixture) => {
+      const oldScore = previous.get(fixture.id);
+      return (
+        fixture.status === "played" &&
+        oldScore !== undefined &&
+        ((fixture.home_score ?? 0) > (oldScore.home ?? 0) ||
+          (fixture.away_score ?? 0) > (oldScore.away ?? 0))
+      );
+    });
+    if (!changedFixture) return;
+
+    const oldScore = previous.get(changedFixture.id);
+    if (!oldScore) return;
+    const homeAdded =
+      (changedFixture.home_score ?? 0) > (oldScore.home ?? 0);
+    const awayAdded =
+      (changedFixture.away_score ?? 0) > (oldScore.away ?? 0);
+    const homeTeam = data.teams.find(
+      (team) => team.id === changedFixture.home_team_id,
+    );
+    const awayTeam = data.teams.find(
+      (team) => team.id === changedFixture.away_team_id,
+    );
+    if (!homeTeam || !awayTeam) return;
+    const scoringTeamName =
+      homeAdded && awayAdded
+        ? `${homeTeam.name} & ${awayTeam.name}`
+        : homeAdded
+          ? homeTeam.name
+          : awayTeam.name;
+    setGoalCelebration({
+      teamName: scoringTeamName,
+      matchup: `${homeTeam.name} vs ${awayTeam.name}`,
+      score: `${changedFixture.home_score ?? 0} - ${changedFixture.away_score ?? 0}`,
+    });
+  }, [data, tournamentId]);
+
+  useEffect(() => {
+    if (!goalCelebration) return;
+    const timeout = setTimeout(() => setGoalCelebration(null), 2800);
+    return () => clearTimeout(timeout);
+  }, [goalCelebration]);
 
   useEffect(() => {
     if (!fixtureId || !data || openedFixtureId.current === fixtureId) return;
@@ -216,18 +307,6 @@ function TournamentContent() {
       }
     },
   });
-  const scheduleMutation = useMutation({
-    mutationFn: scheduleFixture,
-    onSuccess: async () => {
-      await queryClient.invalidateQueries({
-        queryKey: ["tournament", tournamentId],
-      });
-      await queryClient.invalidateQueries({
-        queryKey: ["activity", tournamentId],
-      });
-      setSelectedFixture(null);
-    },
-  });
   const removeTeamMutation = useMutation({
     mutationFn: (teamId: string) => removeTournamentTeam(tournamentId, teamId),
     onSuccess: async () => {
@@ -238,10 +317,6 @@ function TournamentContent() {
         queryKey: ["activity", tournamentId],
       });
       await queryClient.invalidateQueries({ queryKey: ["tournaments"] });
-      await queryClient.invalidateQueries({ queryKey: ["notifications"] });
-      await queryClient.invalidateQueries({
-        queryKey: ["unread-notification-count"],
-      });
       setConfirmation(null);
       setSelectedFixture(null);
     },
@@ -256,10 +331,6 @@ function TournamentContent() {
         queryKey: ["activity", tournamentId],
       });
       await queryClient.invalidateQueries({ queryKey: ["tournaments"] });
-      await queryClient.invalidateQueries({ queryKey: ["notifications"] });
-      await queryClient.invalidateQueries({
-        queryKey: ["unread-notification-count"],
-      });
       setConfirmation(null);
       setSelectedFixture(null);
     },
@@ -393,17 +464,14 @@ function TournamentContent() {
           <ResultModal
             fixture={selectedFixture}
             teamById={teamById}
-            canEdit={Boolean(isOwner)}
+            canEdit={canEditFixtures}
             busy={resultMutation.isPending}
             error={resultMutation.error?.message}
-            scheduleBusy={scheduleMutation.isPending}
-            scheduleError={scheduleMutation.error?.message}
             onClose={() => {
               setSelectedFixture(null);
               resultMutation.reset();
             }}
             onSave={(input) => resultMutation.mutate(input)}
-            onSchedule={(input) => scheduleMutation.mutate(input)}
           />
         ) : (
           <>
@@ -422,7 +490,7 @@ function TournamentContent() {
               <Fixtures
                 fixtures={data.fixtures}
                 teamById={teamById}
-                canEdit={Boolean(isOwner)}
+                canEdit={canEditFixtures}
                 onSelect={setSelectedFixture}
                 onDelete={(fixture) => {
                   deleteFixtureMutation.reset();
@@ -435,6 +503,7 @@ function TournamentContent() {
                 fixture={finalFixture}
                 teamById={teamById}
                 isOwner={Boolean(isOwner)}
+                canEdit={canEditFixtures}
                 championId={championId}
                 onOpenFixture={setSelectedFixture}
                 onDelete={(fixture) => {
@@ -473,6 +542,8 @@ function TournamentContent() {
               <TournamentTeams
                 teams={data.teams}
                 isOwner={Boolean(isOwner)}
+                canRemove={canEditFixtures}
+                completed={data.tournament.status === "completed"}
                 onRemove={(team) => {
                   removeTeamMutation.reset();
                   setConfirmation({ kind: "removeTeam", team })
@@ -496,12 +567,17 @@ function TournamentContent() {
             {resultMutation.error ? (
               <Text style={styles.error}>{resultMutation.error.message}</Text>
             ) : null}
-            {scheduleMutation.error ? (
-              <Text style={styles.error}>{scheduleMutation.error.message}</Text>
-            ) : null}
           </>
         )}
       </ScrollView>
+      {goalCelebration ? (
+        <GoalCelebration
+          teamName={goalCelebration.teamName}
+          matchup={goalCelebration.matchup}
+          score={goalCelebration.score}
+          onDismiss={() => setGoalCelebration(null)}
+        />
+      ) : null}
       <Modal
         visible={confirmation !== null}
         transparent
@@ -638,6 +714,7 @@ function Overview({
   const teams = new Map(data.teams.map((team) => [team.id, team.name]));
   return (
     <View>
+      <StadiumScene />
       <View style={styles.panelHeading}>
         <Text style={styles.sectionTitle}>Season snapshot</Text>
         <Text style={styles.panelMeta}>
@@ -801,6 +878,54 @@ function ActionBanner({
   );
 }
 
+function GoalCelebration({
+  teamName,
+  matchup,
+  score,
+  onDismiss,
+}: GoalCelebrationState & { onDismiss: () => void }) {
+  const progress = useSharedValue(0);
+  useEffect(() => {
+    progress.value = withSpring(1, { damping: 18, stiffness: 180 });
+    return () => cancelAnimation(progress);
+  }, [progress]);
+  const revealStyle = useAnimatedStyle(() => ({
+    opacity: progress.value,
+    transform: [
+      { translateY: interpolate(progress.value, [0, 1], [-14, 0]) },
+      { scale: interpolate(progress.value, [0, 1], [0.96, 1]) },
+    ],
+  }));
+
+  return (
+    <View pointerEvents="box-none" style={styles.goalOverlay}>
+      <Animated.View
+        accessibilityLiveRegion="assertive"
+        style={[styles.goalToast, revealStyle]}
+      >
+        <View style={styles.goalAccent} />
+        <View style={styles.goalCopy}>
+          <Text style={styles.goalKicker}>GOAL</Text>
+          <Text style={styles.goalTeam} numberOfLines={1}>
+            {teamName}
+          </Text>
+          <Text style={styles.goalMatch} numberOfLines={1}>
+            {matchup} · {score}
+          </Text>
+        </View>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Dismiss goal celebration"
+          onPress={onDismiss}
+          style={styles.goalDismiss}
+        >
+          <X color={colors.text} size={17} />
+        </Pressable>
+      </Animated.View>
+    </View>
+  );
+}
+
 function Fixtures({
   fixtures,
   teamById,
@@ -859,7 +984,7 @@ function Fixtures({
         .sort(([a], [b]) => a - b)
         .map(([round, matches]) => (
           <View key={round}>
-            <Text style={styles.groupTitle}>M{round}</Text>
+            <Text style={styles.groupTitle}>Match {round}</Text>
             {matches.map((fixture) => {
               const home = teamById.get(fixture.home_team_id);
               const away = teamById.get(fixture.away_team_id);
@@ -911,6 +1036,7 @@ function FinalSection({
   fixture,
   teamById,
   isOwner,
+  canEdit,
   championId,
   onOpenFixture,
   onDelete,
@@ -919,6 +1045,7 @@ function FinalSection({
   fixture: TournamentFixture;
   teamById: Map<string, { id: string; name: string; logo_path: string | null }>;
   isOwner: boolean;
+  canEdit: boolean;
   championId: string | null;
   onOpenFixture: (fixture: TournamentFixture) => void;
   onDelete: (fixture: TournamentFixture) => void;
@@ -944,7 +1071,7 @@ function FinalSection({
         homeLogoPath={home?.logo_path}
         away={away?.name ?? "Away"}
         awayLogoPath={away?.logo_path}
-        canEdit={isOwner}
+        canEdit={canEdit}
         onPress={() => onOpenFixture(fixture)}
         onDelete={() => onDelete(fixture)}
         final
@@ -973,7 +1100,7 @@ function FinalSection({
           <Shield color={colors.muted} size={17} />
           <Text style={styles.waitingText}>
             {isOwner
-              ? "Open the fixture to set a kickoff time or record the result."
+              ?               "Open the fixture to record the result."
               : "The tournament owner has not recorded the final result yet."}
           </Text>
         </View>
@@ -1006,17 +1133,37 @@ function FixtureCard({
   final?: boolean;
 }) {
   return (
-    <View style={[styles.fixtureCard, final && styles.finalFixture]}>
-      <Pressable accessibilityRole="button" onPress={onPress} style={styles.fixtureMain}>
-        <View style={styles.fixtureMeta}>
+    <View
+      style={[
+        styles.fixtureCard,
+        fixture.status === "played" && styles.playedFixture,
+        final && styles.finalFixture,
+      ]}
+    >
+      <Pressable
+        accessibilityRole="button"
+        onPress={onPress}
+        style={({ pressed }) => [
+          styles.fixtureMain,
+          pressed && styles.fixtureMainPressed,
+        ]}
+      >
+        <View
+          style={[
+            styles.fixtureMeta,
+            canEdit && styles.fixtureMetaOwner,
+          ]}
+        >
           <Text style={styles.fixtureRound}>
             {final ? "CHAMPIONSHIP FINAL" : `LEG ${leg ?? "—"}`}
           </Text>
-          <Text style={[styles.fixtureTime, canEdit && styles.fixtureTimeOwner]}>
-            {fixture.scheduled_at
-              ? new Date(fixture.scheduled_at).toLocaleString()
-              : "Time TBD"}
-          </Text>
+          {fixture.scheduled_at ? (
+            <Text
+              style={[styles.fixtureTime, canEdit && styles.fixtureTimeOwner]}
+            >
+              {new Date(fixture.scheduled_at).toLocaleString()}
+            </Text>
+          ) : null}
         </View>
         <View style={styles.matchRow}>
           <View style={styles.matchSide}>
@@ -1302,10 +1449,14 @@ function TableSection({
 function TournamentTeams({
   teams,
   isOwner,
+  canRemove,
+  completed,
   onRemove,
 }: {
   teams: Array<{ id: string; name: string; logo_path: string | null }>;
   isOwner: boolean;
+  canRemove: boolean;
+  completed: boolean;
   onRemove: (team: { id: string; name: string }) => void;
 }) {
   return (
@@ -1314,7 +1465,9 @@ function TournamentTeams({
       <Text style={styles.panelMeta}>
         {teams.length} clubs ·{" "}
         {isOwner
-          ? "global team details stay with their owners"
+          ? completed
+            ? "completed tournaments are read-only"
+            : "global team details stay with their owners"
           : "read-only member access"}
       </Text>
       <View style={styles.teamList}>
@@ -1322,7 +1475,7 @@ function TournamentTeams({
           <View key={team.id} style={styles.tournamentTeam}>
             <TeamCrest name={team.name} logoPath={team.logo_path} size={38} />
             <Text style={styles.tournamentTeamName}>{team.name}</Text>
-            {isOwner ? (
+            {canRemove ? (
               <Pressable
                 accessibilityRole="button"
                 accessibilityLabel={`Remove ${team.name} from tournament`}
@@ -1371,7 +1524,7 @@ function ActivityFeed({
         <Activity color={colors.accent} size={22} />
         <Text style={styles.emptyTitle}>No activity yet</Text>
         <Text style={styles.emptyBody}>
-          Tournament updates will appear here.
+          Tournament activity will appear here.
         </Text>
       </View>
     );
@@ -1400,19 +1553,14 @@ function ResultModal({
   canEdit,
   busy,
   error,
-  scheduleBusy,
-  scheduleError,
   onClose,
   onSave,
-  onSchedule,
 }: {
   fixture: TournamentFixture;
   teamById: Map<string, { id: string; name: string; logo_path: string | null }>;
   canEdit: boolean;
   busy: boolean;
   error?: string;
-  scheduleBusy: boolean;
-  scheduleError?: string;
   onClose: () => void;
   onSave: (input: {
     fixtureId: string;
@@ -1423,11 +1571,6 @@ function ResultModal({
     goalEvents: GoalEventInput[];
     notes: string;
   }) => void;
-  onSchedule: (input: {
-    fixtureId: string;
-    expectedVersion: number;
-    scheduledAt: string | null;
-  }) => void;
 }) {
   const [homeScore, setHomeScore] = useState(
     fixture.home_score === null ? "" : String(fixture.home_score),
@@ -1435,55 +1578,10 @@ function ResultModal({
   const [awayScore, setAwayScore] = useState(
     fixture.away_score === null ? "" : String(fixture.away_score),
   );
-  const scorerText = (teamId: string) =>
-    (fixture.goal_events ?? [])
-      .filter((event) => event.team_id === teamId)
-      .map((event) =>
-        `${event.scorer_name ?? ""}${event.minute === null ? "" : ` (${event.minute})`}`.trim(),
-      )
-      .join(", ");
-  const [homeScorers, setHomeScorers] = useState(() =>
-    scorerText(fixture.home_team_id),
-  );
-  const [awayScorers, setAwayScorers] = useState(() =>
-    scorerText(fixture.away_team_id),
-  );
   const [notes, setNotes] = useState(fixture.notes ?? "");
-  const [kickoff, setKickoff] = useState(() =>
-    fixture.scheduled_at ? formatLocalKickoff(fixture.scheduled_at) : "",
-  );
   const [validationError, setValidationError] = useState("");
   const homeName = teamById.get(fixture.home_team_id)?.name ?? "Home";
   const awayName = teamById.get(fixture.away_team_id)?.name ?? "Away";
-  const schedule = () => {
-    const value = kickoff.trim();
-    if (!value) {
-      onSchedule({
-        fixtureId: fixture.id,
-        expectedVersion: fixture.version,
-        scheduledAt: null,
-      });
-      return;
-    }
-    if (!/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/.test(value)) {
-      setValidationError("Use local time in YYYY-MM-DD HH:mm format.");
-      return;
-    }
-    const parsed = new Date(`${value.replace(" ", "T")}:00`);
-    if (
-      !Number.isFinite(parsed.getTime()) ||
-      formatLocalKickoff(parsed.toISOString()) !== value
-    ) {
-      setValidationError("Enter a valid local date and time.");
-      return;
-    }
-    setValidationError("");
-    onSchedule({
-      fixtureId: fixture.id,
-      expectedVersion: fixture.version,
-      scheduledAt: parsed.toISOString(),
-    });
-  };
   const save = () => {
     setValidationError("");
     if (!/^\d+$/.test(homeScore) || !/^\d+$/.test(awayScore)) {
@@ -1494,42 +1592,31 @@ function ResultModal({
     }
     const homeGoals = Number(homeScore);
     const awayGoals = Number(awayScore);
-    const makeEvents = (
-      value: string,
-      teamId: string,
-      score: number,
-    ): GoalEventInput[] | null => {
-      const entries = value
-        .split(",")
-        .map((entry) => entry.trim())
-        .filter(Boolean);
-      if (!entries.length) return [];
-      if (entries.length !== score) return null;
-      return entries.map((entry) => {
-        const match = entry.match(/^(.*?)(?:\s*\((\d{1,3})\))?$/);
-        return {
-          team_id: teamId,
-          scorer_name: match?.[1]?.trim() || null,
-          minute: match?.[2] ? Number(match[2]) : null,
-          goal_type: "regular",
-        };
-      });
-    };
-    const homeEvents = makeEvents(homeScorers, fixture.home_team_id, homeGoals);
-    const awayEvents = makeEvents(awayScorers, fixture.away_team_id, awayGoals);
-    if (!homeEvents || !awayEvents) {
-      setValidationError(
-        "For scorer details, list every goal as Name or Name (minute), separated by commas.",
-      );
-      return;
-    }
+    const existingEvents = fixture.goal_events ?? [];
+    const existingHomeEvents = existingEvents.filter(
+      (event) => event.team_id === fixture.home_team_id,
+    ).length;
+    const existingAwayEvents = existingEvents.filter(
+      (event) => event.team_id === fixture.away_team_id,
+    ).length;
+    const goalEvents =
+      existingHomeEvents === homeGoals && existingAwayEvents === awayGoals
+        ? existingEvents.map(
+            ({ team_id, scorer_name, minute, goal_type }) => ({
+              team_id,
+              scorer_name,
+              minute,
+              goal_type,
+            }),
+          )
+        : [];
     onSave({
       fixtureId: fixture.id,
       expectedVersion: fixture.version,
       status: "played",
       homeScore: homeGoals,
       awayScore: awayGoals,
-      goalEvents: [...homeEvents, ...awayEvents],
+      goalEvents,
       notes,
     });
   };
@@ -1551,7 +1638,7 @@ function ResultModal({
           <Text style={styles.fixtureRound}>
             {fixture.stage === "final"
               ? "THE FINAL"
-              : `MATCHDAY ${fixture.matchdays?.round_number ?? "—"}`}
+              : `Match ${fixture.matchdays?.round_number ?? "—"}`}
           </Text>
           <Text style={styles.modalTitle}>
             {canEdit ? "Match result" : "Match details"}
@@ -1620,53 +1707,6 @@ function ResultModal({
         </View>
         {canEdit ? (
           <>
-            <Text style={styles.label}>
-              SCORERS <Text style={styles.optional}>OPTIONAL</Text>
-            </Text>
-            <TextInput
-              value={homeScorers}
-              onChangeText={setHomeScorers}
-              placeholder={`${homeName}: e.g. A. Player (34), B. Player (71)`}
-              placeholderTextColor={colors.dim}
-              style={styles.input}
-            />
-            <TextInput
-              value={awayScorers}
-              onChangeText={setAwayScorers}
-              placeholder={`${awayName}: scorer names and minutes`}
-              placeholderTextColor={colors.dim}
-              style={[styles.input, { marginTop: spacing.sm }]}
-            />
-            <Text style={styles.helper}>
-              If entered, scorer count must match that team’s score. Minutes are
-              optional.
-            </Text>
-          </>
-        ) : null}
-        {fixture.goal_events?.length ? (
-          <View style={styles.timeline}>
-            <Text style={styles.label}>GOAL TIMELINE</Text>
-            {[...fixture.goal_events]
-              .sort(
-                (left, right) => (left.minute ?? 999) - (right.minute ?? 999),
-              )
-              .map((event) => (
-                <View key={event.id} style={styles.timelineRow}>
-                  <Text style={styles.goalMinute}>
-                    {event.minute === null ? "—" : `${event.minute}'`}
-                  </Text>
-                  <Text style={styles.goalScorer}>
-                    {event.scorer_name || "Scorer not recorded"}
-                  </Text>
-                  <Text style={styles.goalTeam}>
-                    {teamById.get(event.team_id)?.name ?? "Team"}
-                  </Text>
-                </View>
-              ))}
-          </View>
-        ) : null}
-        {canEdit ? (
-          <>
             <Text style={[styles.label, { marginTop: spacing.lg }]}>
               MATCH NOTES <Text style={styles.optional}>OPTIONAL</Text>
             </Text>
@@ -1686,44 +1726,12 @@ function ResultModal({
             <Text style={styles.readOnlyNoteText}>{notes}</Text>
           </View>
         ) : null}
-        {validationError || error || scheduleError ? (
-          <Text style={styles.error}>
-            {validationError || error || scheduleError}
-          </Text>
+        {validationError || error ? (
+          <Text style={styles.error}>{validationError || error}</Text>
         ) : null}
       </View>
       {canEdit ? (
         <View style={styles.modalFooter}>
-          {fixture.status === "pending" ? (
-            <>
-              <Text style={styles.label}>KICKOFF · DEVICE LOCAL TIME</Text>
-              <TextInput
-                value={kickoff}
-                onChangeText={setKickoff}
-                placeholder="YYYY-MM-DD HH:mm"
-                placeholderTextColor={colors.dim}
-                style={styles.input}
-                autoCapitalize="none"
-              />
-              <Pressable
-                accessibilityRole="button"
-                disabled={scheduleBusy}
-                onPress={schedule}
-                style={styles.scheduleButton}
-              >
-                {scheduleBusy ? (
-                  <ActivityIndicator color={colors.accent} />
-                ) : (
-                  <>
-                    <CalendarClock color={colors.accent} size={15} />
-                    <Text style={styles.scheduleText}>
-                      {kickoff ? "Save kickoff time" : "Clear kickoff time"}
-                    </Text>
-                  </>
-                )}
-              </Pressable>
-            </>
-          ) : null}
           {fixture.status === "played" ? (
             <Pressable
               accessibilityRole="button"
@@ -1756,17 +1764,55 @@ function ResultModal({
   );
 }
 
-function formatLocalKickoff(value: string) {
-  const date = new Date(value);
-  if (!Number.isFinite(date.getTime())) return "";
-  const localDate = new Date(
-    date.getTime() - date.getTimezoneOffset() * 60_000,
-  );
-  return localDate.toISOString().slice(0, 16).replace("T", " ");
-}
-
 const styles = createThemedStyles({
   safe: { flex: 1, backgroundColor: colors.background },
+  goalOverlay: {
+    position: "absolute",
+    top: spacing.md,
+    left: spacing.lg,
+    right: spacing.lg,
+    zIndex: 50,
+    elevation: 8,
+  },
+  goalToast: {
+    minHeight: 76,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.md,
+    padding: spacing.md,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.accent,
+    borderRadius: radii.md,
+  },
+  goalAccent: {
+    width: 4,
+    height: 46,
+    borderRadius: radii.pill,
+    backgroundColor: colors.accent,
+  },
+  goalCopy: { flex: 1, minWidth: 0 },
+  goalKicker: {
+    color: colors.accent,
+    fontSize: 9,
+    fontWeight: "900",
+    letterSpacing: 1.1,
+  },
+  goalTeam: {
+    color: colors.text,
+    fontSize: 17,
+    fontWeight: "900",
+    marginTop: 2,
+  },
+  goalMatch: { color: colors.muted, fontSize: 10, marginTop: 3 },
+  goalDismiss: {
+    width: 36,
+    height: 36,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: colors.elevated,
+    borderRadius: radii.sm,
+  },
   center: {
     flex: 1,
     backgroundColor: colors.background,
@@ -2017,13 +2063,16 @@ const styles = createThemedStyles({
     marginBottom: 8,
   },
   fixtureMain: { flex: 1 },
-  finalFixture: { borderColor: colors.accent },
+  fixtureMainPressed: { opacity: 0.82 },
+  playedFixture: { borderColor: colors.accent },
+  finalFixture: { borderColor: colors.gold },
   fixtureMeta: {
     flexDirection: "row",
     justifyContent: "space-between",
     marginBottom: 13,
     gap: 8,
   },
+  fixtureMetaOwner: { paddingRight: 38, marginBottom: 22 },
   fixtureTimeOwner: { marginRight: 38 },
   fixtureDelete: {
     position: "absolute",
@@ -2428,29 +2477,6 @@ const styles = createThemedStyles({
     borderRadius: radii.sm,
     paddingHorizontal: spacing.md,
   },
-  helper: { color: colors.dim, fontSize: 9, lineHeight: 14, marginTop: 6 },
-  timeline: {
-    marginTop: spacing.lg,
-    backgroundColor: colors.surface,
-    borderRadius: radii.sm,
-    padding: spacing.md,
-  },
-  timelineRow: {
-    minHeight: 30,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 9,
-    borderTopWidth: 1,
-    borderTopColor: colors.border,
-  },
-  goalMinute: {
-    width: 34,
-    color: colors.accent,
-    fontFamily: "SpaceMono",
-    fontSize: 10,
-  },
-  goalScorer: { flex: 1, color: colors.text, fontSize: 11, fontWeight: "700" },
-  goalTeam: { color: colors.muted, fontSize: 9 },
   notesInput: {
     minHeight: 72,
     paddingTop: spacing.md,
@@ -2469,17 +2495,6 @@ const styles = createThemedStyles({
     borderTopColor: colors.border,
     gap: 8,
   },
-  scheduleButton: {
-    minHeight: 38,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 7,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: radii.sm,
-  },
-  scheduleText: { color: colors.accent, fontSize: 10, fontWeight: "800" },
   revertButton: {
     minHeight: 40,
     flexDirection: "row",

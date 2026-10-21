@@ -10,10 +10,19 @@ import {
   Trophy,
 } from "lucide-react-native";
 import { useMemo, useState } from "react";
-import { Pressable, ScrollView, Text, TextInput, View } from "react-native";
+import {
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
+} from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { AuthGate } from "@/src/components/AuthGate";
+import { ClubMatchdayFooter } from "@/src/components/ClubMatchdayFooter";
+import { ClubWelcomeScene } from "@/src/components/ClubWelcomeScene";
 import { TeamCrest } from "@/src/components/TeamCrest";
 import {
   listTeams,
@@ -53,8 +62,8 @@ function DashboardContent() {
     enabled: Boolean(session && club),
   });
   const teamsQuery = useQuery({
-    queryKey: ["teams", session?.user.id],
-    queryFn: () => listTeams(session?.user.id),
+    queryKey: ["teams", session?.user.id, club?.id],
+    queryFn: () => listTeams(club?.id ?? "", session?.user.id),
     enabled: Boolean(session && club),
   });
   const tournaments = query.data ?? [];
@@ -120,6 +129,19 @@ function DashboardContent() {
           end={{ x: 1, y: 1 }}
           style={styles.hero}
         >
+          <View pointerEvents="none" style={styles.heroAtmosphere}>
+            <View style={styles.heroGlow} />
+            <View style={styles.stadiumLights}>
+              <View style={styles.stadiumLight} />
+              <View style={styles.stadiumLight} />
+              <View style={styles.stadiumLight} />
+            </View>
+            <View style={styles.pitchOutline}>
+              <View style={styles.pitchHalfway} />
+              <View style={styles.pitchCircle} />
+              <View style={styles.pitchBox} />
+            </View>
+          </View>
           <View style={styles.heroText}>
             <Text style={styles.heroLabel}>THE SEASON STARTS HERE</Text>
             <Text style={styles.heroTitle}>Make every match count.</Text>
@@ -334,6 +356,8 @@ function ClubSetupScreen({
           </View>
         </View>
 
+        <ClubWelcomeScene />
+
         <LinearGradient
           colors={
             themeMode === "dark"
@@ -351,29 +375,33 @@ function ClubSetupScreen({
             </Text>
             <Text style={styles.heroBody}>
               Set the club name and a 6-digit PIN so your group can share
-              tournaments, teams, and updates.
+              tournaments and teams.
             </Text>
           </View>
         </LinearGradient>
 
         {!mode ? (
-          <View style={styles.clubActions}>
-            <Pressable
-              accessibilityRole="button"
-              onPress={() => setMode("create")}
-              style={[styles.heroButton, styles.clubActionButton]}
-            >
-              <Plus color={colors.background} size={18} />
-              <Text style={styles.heroButtonText}>Create Club</Text>
-            </Pressable>
-            <Pressable
-              accessibilityRole="button"
-              onPress={() => setMode("join")}
-              style={[styles.secondaryAction, styles.clubActionButton]}
-            >
-              <Text style={styles.secondaryActionText}>Join with PIN</Text>
-            </Pressable>
-          </View>
+          <>
+            <View style={styles.clubActions}>
+              <Pressable
+                accessibilityRole="button"
+                onPress={() => setMode("create")}
+                style={[styles.heroButton, styles.clubActionButton]}
+              >
+                <Plus color={colors.background} size={18} />
+                <Text style={styles.heroButtonText}>Create Club</Text>
+              </Pressable>
+              <Pressable
+                accessibilityRole="button"
+                onPress={() => setMode("join")}
+                style={[styles.secondaryAction, styles.clubActionButton]}
+              >
+                <Text style={styles.secondaryActionText}>Join with PIN</Text>
+              </Pressable>
+            </View>
+            <View style={styles.clubFooterSpacer} />
+            <ClubMatchdayFooter />
+          </>
         ) : (
           <View style={styles.clubForm}>
             <Text style={styles.formTitle}>
@@ -463,8 +491,19 @@ function TournamentCard({
           params: { id: tournament.id },
         })
       }
-      style={styles.card}
+      style={({ pressed }) => [
+        styles.card,
+        tournament.status === "active" && styles.cardActive,
+        pressed && styles.cardPressed,
+      ]}
     >
+      <View
+        pointerEvents="none"
+        style={[
+          styles.cardAtmosphere,
+          tournament.status === "completed" && styles.cardAtmosphereComplete,
+        ]}
+      />
       <View style={styles.cardTop}>
         <View
           style={[
@@ -523,6 +562,7 @@ const styles = createThemedStyles({
     width: "100%",
     alignSelf: "center",
   },
+  clubFooterSpacer: { height: 90 },
   greetingRow: {
     flexDirection: "row",
     alignItems: "center",
@@ -550,11 +590,82 @@ const styles = createThemedStyles({
   },
   avatarText: { color: colors.accent, fontSize: 16, fontWeight: "900" },
   hero: {
+    position: "relative",
     borderRadius: radii.md,
     borderWidth: 1,
-    borderColor: "#3A5141",
+    borderColor: colors.accent,
     padding: spacing.xl,
     overflow: "hidden",
+  },
+  heroAtmosphere: {
+    ...StyleSheet.absoluteFill,
+  },
+  heroGlow: {
+    position: "absolute",
+    top: -58,
+    right: -24,
+    width: 176,
+    height: 176,
+    borderRadius: 88,
+    backgroundColor: colors.accent,
+    opacity: 0.12,
+  },
+  stadiumLights: {
+    position: "absolute",
+    top: 16,
+    right: 18,
+    flexDirection: "row",
+    gap: 6,
+  },
+  stadiumLight: {
+    width: 18,
+    height: 3,
+    borderRadius: radii.pill,
+    backgroundColor: colors.text,
+    opacity: 0.32,
+  },
+  pitchOutline: {
+    position: "absolute",
+    right: -34,
+    bottom: -36,
+    width: 174,
+    height: 112,
+    borderWidth: 1,
+    borderColor: colors.text,
+    borderRadius: 48,
+    opacity: 0.16,
+    overflow: "hidden",
+  },
+  pitchHalfway: {
+    position: "absolute",
+    left: "50%",
+    top: 0,
+    bottom: 0,
+    width: 1,
+    backgroundColor: colors.text,
+  },
+  pitchCircle: {
+    position: "absolute",
+    width: 46,
+    height: 46,
+    left: "50%",
+    top: "50%",
+    marginLeft: -23,
+    marginTop: -23,
+    borderWidth: 1,
+    borderColor: colors.text,
+    borderRadius: radii.pill,
+  },
+  pitchBox: {
+    position: "absolute",
+    right: 0,
+    top: 28,
+    width: 28,
+    height: 54,
+    borderLeftWidth: 1,
+    borderTopWidth: 1,
+    borderBottomWidth: 1,
+    borderColor: colors.text,
   },
   heroText: { maxWidth: 390 },
   heroLabel: {
@@ -709,11 +820,29 @@ const styles = createThemedStyles({
   filterTextSelected: { color: colors.accent },
   list: { gap: 10 },
   card: {
+    position: "relative",
     backgroundColor: colors.surface,
     borderRadius: radii.md,
     padding: spacing.lg,
     borderWidth: 1,
     borderColor: colors.border,
+    overflow: "hidden",
+  },
+  cardActive: { borderColor: colors.accent },
+  cardPressed: { opacity: 0.84 },
+  cardAtmosphere: {
+    position: "absolute",
+    top: -48,
+    right: -60,
+    width: 144,
+    height: 112,
+    borderRadius: radii.pill,
+    backgroundColor: colors.accent,
+    opacity: 0.055,
+  },
+  cardAtmosphereComplete: {
+    backgroundColor: colors.gold,
+    opacity: 0.07,
   },
   cardTop: {
     flexDirection: "row",

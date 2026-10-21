@@ -8,6 +8,7 @@ import {
   Plus,
   Search,
   Shield,
+  Trash2,
   X,
 } from "lucide-react-native";
 import { useState } from "react";
@@ -29,6 +30,7 @@ import { z } from "zod";
 import { AuthGate } from "@/src/components/AuthGate";
 import {
   createTeam,
+  deleteTeam,
   getSignedLogoUrl,
   listTeams,
   type TeamRecord,
@@ -58,16 +60,25 @@ export default function TeamsScreen() {
 }
 
 function TeamsContent() {
-  const { session } = useAuth();
+  const { session, club } = useAuth();
   const [search, setSearch] = useState("");
+  const [teamFilter, setTeamFilter] = useState<"mine" | "shared">("mine");
   const [modalVisible, setModalVisible] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<TeamRecord | null>(null);
   const [asset, setAsset] = useState<ImagePicker.ImagePickerAsset | null>(null);
   const [uploading, setUploading] = useState(false);
   const queryClient = useQueryClient();
   const teamsQuery = useQuery({
-    queryKey: ["teams", session?.user.id],
-    queryFn: () => listTeams(session?.user.id),
-    enabled: Boolean(session),
+    queryKey: ["teams", session?.user.id, club?.id],
+    queryFn: () => listTeams(club?.id ?? ""),
+    enabled: Boolean(session && club),
+  });
+  const deleteMutation = useMutation({
+    mutationFn: deleteTeam,
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["teams"] });
+      setDeleteTarget(null);
+    },
   });
   const {
     control,
@@ -122,7 +133,8 @@ function TeamsContent() {
             .upload(path, blob, { contentType: asset.mimeType, upsert: false });
           if (error) throw error;
         }
-        return await createTeam(name, path);
+        if (!club) throw new Error("Join a Club before creating a team.");
+        return await createTeam(club.id, name, path);
       } catch (error) {
         if (path && supabase)
           await supabase.storage.from("team-logos").remove([path]);
@@ -157,8 +169,20 @@ function TeamsContent() {
     if (!result.canceled) setAsset(result.assets[0] ?? null);
   };
   const teams = (teamsQuery.data ?? []).filter((team) =>
+    (teamFilter === "mine"
+      ? team.owner_id === session?.user.id
+      : team.owner_id !== session?.user.id) &&
     team.name.toLowerCase().includes(search.trim().toLowerCase()),
   );
+  const ownedTeamCount = (teamsQuery.data ?? []).filter(
+    (team) => team.owner_id === session?.user.id,
+  ).length;
+  const sharedTeamCount = (teamsQuery.data ?? []).length - ownedTeamCount;
+  const teamInUseMessage = deleteMutation.error?.message.includes(
+    "being used by tournament",
+  )
+    ? deleteMutation.error.message
+    : null;
   const submit = handleSubmit((values) => createMutation.mutateAsync(values));
 
   return (
@@ -187,10 +211,40 @@ function TeamsContent() {
             style={styles.searchInput}
           />
         </View>
+        <View style={styles.filters}>
+          {(
+            [
+              ["mine", "Created by me", ownedTeamCount],
+              ["shared", "Shared with me", sharedTeamCount],
+            ] as const
+          ).map(([value, label, count]) => (
+            <Pressable
+              key={value}
+              accessibilityRole="button"
+              accessibilityState={{ selected: teamFilter === value }}
+              onPress={() => setTeamFilter(value)}
+              style={[
+                styles.filter,
+                teamFilter === value && styles.filterActive,
+              ]}
+            >
+              <Text
+                style={[
+                  styles.filterText,
+                  teamFilter === value && styles.filterTextActive,
+                ]}
+              >
+                {label} ({count})
+              </Text>
+            </Pressable>
+          ))}
+        </View>
         <View style={styles.countRow}>
-          <Text style={styles.count}>{teamsQuery.data?.length ?? 0} TEAMS</Text>
+          <Text style={styles.count}>{teams.length} TEAMS</Text>
           <Text style={styles.countNote}>
-            Only you can edit your club details
+            {teamFilter === "mine"
+              ? "Teams you created"
+              : "Teams created by other members"}
           </Text>
         </View>
         {teamsQuery.isLoading ? (
@@ -217,9 +271,11 @@ function TeamsContent() {
             <Text style={styles.emptyBody}>
               {search
                 ? "Try another team name."
-                : "Create your first team, then select it for any tournament you manage."}
+                : teamFilter === "mine"
+                  ? "Create a team and it will appear here."
+                  : "Teams created by other members will appear here."}
             </Text>
-            {!search ? (
+            {!search && teamFilter === "mine" ? (
               <Pressable
                 onPress={() => setModalVisible(true)}
                 style={styles.emptyButton}
@@ -232,7 +288,15 @@ function TeamsContent() {
         ) : null}
         <View style={styles.list}>
           {teams.map((team) => (
-            <TeamRow key={team.id} team={team} />
+            <TeamRow
+              key={team.id}
+              team={team}
+              isOwner={team.owner_id === session?.user.id}
+              onDelete={() => {
+                deleteMutation.reset();
+                setDeleteTarget(team);
+              }}
+            />
           ))}
         </View>
       </ScrollView>
@@ -352,11 +416,91 @@ function TeamsContent() {
           </View>
         </SafeAreaView>
       </Modal>
+      <Modal
+        visible={Boolean(deleteTarget)}
+        transparent
+        animationType="fade"
+        onRequestClose={() => {
+          if (!deleteMutation.isPending) setDeleteTarget(null);
+        }}
+      >
+        <View style={styles.confirmBackdrop}>
+          <View style={styles.confirmCard}>
+            <View style={styles.confirmIcon}>
+              <Trash2
+                color={teamInUseMessage ? colors.gold : colors.danger}
+                size={20}
+              />
+            </View>
+            <Text style={styles.confirmTitle}>
+              {teamInUseMessage ? "Team in use" : "Delete this team?"}
+            </Text>
+            <Text style={styles.confirmBody}>
+              {teamInUseMessage ??
+                (deleteTarget
+                  ? `Delete ${deleteTarget.name}? Teams used in any tournament cannot be deleted.`
+                  : "")}
+            </Text>
+            {deleteMutation.error && !teamInUseMessage ? (
+              <Text style={styles.errorText}>
+                {deleteMutation.error.message}
+              </Text>
+            ) : null}
+            <View style={styles.confirmActions}>
+              {teamInUseMessage ? (
+                <Pressable
+                  accessibilityRole="button"
+                  onPress={() => setDeleteTarget(null)}
+                  style={styles.cancelDelete}
+                >
+                  <Text style={styles.cancelDeleteText}>Okay</Text>
+                </Pressable>
+              ) : (
+                <>
+                  <Pressable
+                    accessibilityRole="button"
+                    disabled={deleteMutation.isPending}
+                    onPress={() => setDeleteTarget(null)}
+                    style={styles.cancelDelete}
+                  >
+                    <Text style={styles.cancelDeleteText}>Cancel</Text>
+                  </Pressable>
+                  <Pressable
+                    accessibilityRole="button"
+                    disabled={deleteMutation.isPending}
+                    onPress={() => {
+                      if (deleteTarget) deleteMutation.mutate(deleteTarget.id);
+                    }}
+                    style={[
+                      styles.confirmDelete,
+                      deleteMutation.isPending && styles.disabled,
+                    ]}
+                  >
+                    {deleteMutation.isPending ? (
+                      <ActivityIndicator color={colors.background} />
+                    ) : (
+                      <Text style={styles.confirmDeleteText}>Delete team</Text>
+                    )}
+                  </Pressable>
+                </>
+              )}
+            </View>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
 
-function TeamRow({ team }: { team: TeamRecord }) {
+function TeamRow({
+  team,
+  isOwner,
+  onDelete,
+}: {
+  team: TeamRecord;
+  isOwner: boolean;
+  onDelete: () => void;
+}) {
   const logoQuery = useQuery({
     queryKey: ["team-logo", team.logo_path],
     queryFn: () => getSignedLogoUrl("team-logos", team.logo_path!),
@@ -382,7 +526,18 @@ function TeamRow({ team }: { team: TeamRecord }) {
           Created {new Date(team.created_at).toLocaleDateString()}
         </Text>
       </View>
-      <Text style={styles.owned}>YOURS</Text>
+      {isOwner ? (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={`Delete ${team.name}`}
+          onPress={onDelete}
+          style={styles.deleteButton}
+        >
+          <Trash2 color={colors.danger} size={17} />
+        </Pressable>
+      ) : (
+        <Text style={styles.owned}>SHARED</Text>
+      )}
     </View>
   );
 }
@@ -427,6 +582,33 @@ const styles = createThemedStyles({
     borderRadius: radii.sm,
   },
   searchInput: { flex: 1, color: colors.text, fontSize: 14 },
+  filters: {
+    flexDirection: "row",
+    gap: spacing.sm,
+    marginTop: spacing.md,
+  },
+  filter: {
+    flex: 1,
+    minHeight: 40,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: spacing.sm,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radii.sm,
+  },
+  filterActive: {
+    backgroundColor: colors.elevated,
+    borderColor: colors.accent,
+  },
+  filterText: {
+    color: colors.muted,
+    fontSize: 11,
+    fontWeight: "800",
+    textAlign: "center",
+  },
+  filterTextActive: { color: colors.accent },
   countRow: {
     flexDirection: "row",
     alignItems: "center",
@@ -471,6 +653,79 @@ const styles = createThemedStyles({
     fontSize: 9,
     fontWeight: "900",
     letterSpacing: 0.7,
+  },
+  deleteButton: {
+    width: 36,
+    height: 36,
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: radii.sm,
+    backgroundColor: colors.elevated,
+  },
+  confirmBackdrop: {
+    flex: 1,
+    justifyContent: "center",
+    padding: spacing.lg,
+    backgroundColor: "rgba(0,0,0,0.7)",
+  },
+  confirmCard: {
+    width: "100%",
+    maxWidth: 420,
+    alignSelf: "center",
+    padding: spacing.xl,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radii.lg,
+  },
+  confirmIcon: {
+    width: 44,
+    height: 44,
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: radii.md,
+    backgroundColor: colors.elevated,
+    marginBottom: spacing.md,
+  },
+  confirmTitle: {
+    color: colors.text,
+    fontSize: 19,
+    fontWeight: "900",
+  },
+  confirmBody: {
+    color: colors.muted,
+    fontSize: 13,
+    lineHeight: 19,
+    marginTop: spacing.sm,
+  },
+  confirmActions: {
+    flexDirection: "row",
+    justifyContent: "flex-end",
+    gap: spacing.sm,
+    marginTop: spacing.xl,
+  },
+  cancelDelete: {
+    minHeight: 42,
+    paddingHorizontal: spacing.lg,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: colors.elevated,
+    borderRadius: radii.sm,
+  },
+  cancelDeleteText: { color: colors.text, fontSize: 12, fontWeight: "800" },
+  confirmDelete: {
+    minHeight: 42,
+    minWidth: 112,
+    paddingHorizontal: spacing.lg,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: colors.danger,
+    borderRadius: radii.sm,
+  },
+  confirmDeleteText: {
+    color: colors.background,
+    fontSize: 12,
+    fontWeight: "900",
   },
   empty: {
     alignItems: "center",

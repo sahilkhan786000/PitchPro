@@ -1,5 +1,5 @@
 import { Tabs, usePathname } from "expo-router";
-import { Bell, House, Shield, Trophy, UserRound } from "lucide-react-native";
+import { House, Shield, Trophy, UserRound } from "lucide-react-native";
 
 import { useAuth } from "@/src/lib/auth";
 import { getClubTabHref, getHomeTabHref } from "@/src/lib/clubTabs";
@@ -8,7 +8,7 @@ import { colors } from "@/src/theme/tokens";
 
 export default function TabLayout() {
   useThemeRefresh();
-  const { club } = useAuth();
+  const { club, session } = useAuth();
   const pathname = usePathname();
   const isAuthScreen = [
     "/login",
@@ -29,7 +29,7 @@ export default function TabLayout() {
           height: 68,
           paddingTop: 8,
           paddingBottom: 8,
-          display: isAuthScreen ? "none" : "flex",
+          display: session && !isAuthScreen ? "flex" : "none",
         },
         tabBarLabelStyle: { fontSize: 10, fontWeight: "700" },
       }}
@@ -56,14 +56,6 @@ export default function TabLayout() {
           title: "Teams",
           href: getClubTabHref(club),
           tabBarIcon: ({ color }) => <Shield color={color} size={20} />,
-        }}
-      />
-      <Tabs.Screen
-        name="notifications"
-        options={{
-          title: "Updates",
-          href: getClubTabHref(club),
-          tabBarIcon: ({ color }) => <Bell color={color} size={20} />,
         }}
       />
       <Tabs.Screen

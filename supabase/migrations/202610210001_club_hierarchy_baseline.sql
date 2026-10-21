@@ -603,3 +603,753 @@ create policy logo_update_own_folder on storage.objects for update to authentica
 create policy logo_delete_own_folder on storage.objects for delete to authenticated using (
   bucket_id in ('team-logos', 'tournament-logos') and (storage.foldername(name))[1] = auth.uid()::text
 );
+
+
+drop policy if exists teams_insert_owner on public.teams;
+create policy teams_insert_owner on public.teams
+for insert to authenticated
+with check (
+  owner_id = auth.uid()
+  and (
+    logo_path is null
+    or (storage.foldername(logo_path))[1] = auth.uid()::text
+  )
+);
+
+drop policy if exists teams_update_owner on public.teams;
+create policy teams_update_owner on public.teams
+for update to authenticated
+using (owner_id = auth.uid())
+with check (
+  owner_id = auth.uid()
+  and (
+    logo_path is null
+    or (storage.foldername(logo_path))[1] = auth.uid()::text
+  )
+);
+
+create table public.fanclubs (
+  id uuid primary key default gen_random_uuid(),
+  name text not null check (char_length(trim(name)) between 2 and 60),
+  owner_id uuid not null references auth.users(id) on delete restrict,
+  pin_hash text not null,
+  created_at timestamptz not null default now()
+);
+create unique index fanclubs_name_ci_unique on public.fanclubs (lower(trim(name)));
+
+create table public.fanclub_members (
+  id uuid primary key default gen_random_uuid(),
+  fanclub_id uuid not null references public.fanclubs(id) on delete cascade,
+  user_id uuid not null references auth.users(id) on delete cascade,
+  role text not null check (role in ('owner', 'member')),
+  joined_at timestamptz not null default now(),
+  unique (fanclub_id, user_id)
+);
+create index fanclub_members_user_idx on public.fanclub_members (user_id, fanclub_id);
+
+create table public.fanclub_join_attempts (
+  user_id uuid primary key references auth.users(id) on delete cascade,
+  attempt_count integer not null default 0 check (attempt_count >= 0),
+  window_started_at timestamptz not null default now()
+);
+
+alter table public.tournaments
+  add column fanclub_id uuid references public.fanclubs(id) on delete restrict;
+create index tournaments_fanclub_created_idx
+  on public.tournaments (fanclub_id, created_at desc);
+
+alter table public.fanclubs enable row level security;
+alter table public.fanclub_members enable row level security;
+alter table public.fanclub_join_attempts enable row level security;
+
+create policy fanclub_members_read_self on public.fanclub_members
+for select to authenticated using (user_id = auth.uid());
+
+create function public.is_fanclub_member(p_fanclub_id uuid)
+returns boolean language sql stable security definer set search_path = '' as $$
+  select exists (
+    select 1 from public.fanclub_members m
+    where m.fanclub_id = p_fanclub_id and m.user_id = auth.uid()
+  );
+$$;
+
+create or replace function public.is_tournament_member(p_tournament_id uuid)
+returns boolean language sql stable security definer set search_path = '' as $$
+  select exists (
+    select 1 from public.tournament_members tm
+    where tm.tournament_id = p_tournament_id and tm.user_id = auth.uid()
+  ) or exists (
+    select 1
+    from public.tournaments t
+    join public.fanclub_members fm on fm.fanclub_id = t.fanclub_id
+    where t.id = p_tournament_id and fm.user_id = auth.uid()
+  );
+$$;
+
+drop policy tournaments_insert_owner on public.tournaments;
+create policy tournaments_insert_fanclub_owner on public.tournaments
+for insert to authenticated
+with check (
+  owner_id = auth.uid()
+  and fanclub_id is not null
+  and public.is_fanclub_member(fanclub_id)
+);
+
+drop policy tournaments_update_owner on public.tournaments;
+create policy tournaments_update_owner on public.tournaments
+for update to authenticated
+using (owner_id = auth.uid())
+with check (
+  owner_id = auth.uid()
+  and fanclub_id is not null
+  and public.is_fanclub_member(fanclub_id)
+);
+
+create function public.protect_tournament_fanclub()
+returns trigger language plpgsql set search_path = '' as $$
+begin
+  if tg_op = 'INSERT' then
+    if new.fanclub_id is null or not public.is_fanclub_member(new.fanclub_id) then
+      raise exception 'A tournament must belong to one of your FanClubs.' using errcode = '42501';
+    end if;
+  elsif current_user = 'authenticated' and new.fanclub_id is distinct from old.fanclub_id then
+    raise exception 'Tournament FanClub cannot be changed directly.' using errcode = '42501';
+  end if;
+  return new;
+end;
+$$;
+create trigger tournament_fanclub_guard
+before insert or update on public.tournaments
+for each row execute function public.protect_tournament_fanclub();
+
+drop function public.create_tournament_with_teams(text, text, date, date, text, uuid[]);
+create function public.create_tournament_with_teams(
+  p_fanclub_id uuid,
+  p_name text,
+  p_description text,
+  p_start_date date,
+  p_end_date date,
+  p_timezone text,
+  p_team_ids uuid[]
+)
+returns uuid language plpgsql security definer set search_path = '' as $$
+declare
+  v_tournament_id uuid;
+  v_team_count integer;
+  v_unique_count integer;
+  v_timezone text;
+begin
+  if auth.uid() is null then raise exception 'Authentication required.' using errcode = '28000'; end if;
+  if not public.is_fanclub_member(p_fanclub_id) then raise exception 'Join a FanClub before creating a tournament.' using errcode = '42501'; end if;
+  if char_length(trim(coalesce(p_name, ''))) not between 1 and 100 then raise exception 'Tournament name is required.' using errcode = '22023'; end if;
+  if coalesce(array_length(p_team_ids, 1), 0) < 2 then raise exception 'Select at least two teams.' using errcode = '22023'; end if;
+  if p_start_date is not null and p_end_date is not null and p_end_date < p_start_date then raise exception 'End date must not be before start date.' using errcode = '22023'; end if;
+  v_timezone := coalesce(nullif(trim(p_timezone), ''), 'UTC');
+  if not exists (select 1 from pg_catalog.pg_timezone_names where name = v_timezone) then raise exception 'Unknown time zone.' using errcode = '22023'; end if;
+  select count(*), count(distinct id) into v_team_count, v_unique_count
+  from public.teams where id = any(p_team_ids);
+  if v_team_count <> array_length(p_team_ids, 1) or v_unique_count <> v_team_count then
+    raise exception 'Every selected team must exist and be unique.' using errcode = '22023';
+  end if;
+  insert into public.tournaments (owner_id, fanclub_id, name, description, start_date, end_date, timezone)
+  values (auth.uid(), p_fanclub_id, trim(p_name), nullif(trim(coalesce(p_description, '')), ''), p_start_date, p_end_date, v_timezone)
+  returning id into v_tournament_id;
+  insert into public.tournament_teams (tournament_id, team_id, seed)
+  select v_tournament_id, team_id, ordinality::integer
+  from unnest(p_team_ids) with ordinality as selected(team_id, ordinality);
+  insert into public.activity_events (tournament_id, actor_id, event_type, metadata)
+  values (v_tournament_id, auth.uid(), 'tournament_created', jsonb_build_object('team_count', v_team_count));
+  return v_tournament_id;
+end;
+$$;
+
+create function public.create_fanclub(p_name text, p_pin text)
+returns jsonb language plpgsql security definer set search_path = '' as $$
+declare
+  v_fanclub_id uuid;
+  v_name text := trim(coalesce(p_name, ''));
+begin
+  if auth.uid() is null then raise exception 'Authentication required.' using errcode = '28000'; end if;
+  if char_length(v_name) not between 2 and 60 then raise exception 'FanClub name must be between 2 and 60 characters.' using errcode = '22023'; end if;
+  if coalesce(p_pin, '') !~ '^[0-9]{6}$' then raise exception 'PIN must be exactly six digits.' using errcode = '22023'; end if;
+  insert into public.fanclubs (name, owner_id, pin_hash)
+  values (v_name, auth.uid(), extensions.crypt(p_pin, extensions.gen_salt('bf', 12)))
+  returning id into v_fanclub_id;
+  insert into public.fanclub_members (fanclub_id, user_id, role)
+  values (v_fanclub_id, auth.uid(), 'owner');
+  update public.tournaments set fanclub_id = v_fanclub_id
+  where owner_id = auth.uid() and fanclub_id is null;
+  return jsonb_build_object('ok', true, 'id', v_fanclub_id, 'name', v_name);
+exception when unique_violation then
+  raise exception 'A FanClub with that name already exists.' using errcode = '23505';
+end;
+$$;
+
+create function public.join_fanclub(p_name text, p_pin text)
+returns jsonb language plpgsql security definer set search_path = '' as $$
+declare
+  v_name text := trim(coalesce(p_name, ''));
+  v_fanclub public.fanclubs%rowtype;
+  v_attempt_count integer;
+begin
+  if auth.uid() is null then raise exception 'Authentication required.' using errcode = '28000'; end if;
+  insert into public.fanclub_join_attempts as attempts (user_id, attempt_count, window_started_at)
+  values (auth.uid(), 1, now())
+  on conflict (user_id) do update set
+    attempt_count = case
+      when attempts.window_started_at < now() - interval '15 minutes' then 1
+      else attempts.attempt_count + 1
+    end,
+    window_started_at = case
+      when attempts.window_started_at < now() - interval '15 minutes' then now()
+      else attempts.window_started_at
+    end
+  returning attempts.attempt_count into v_attempt_count;
+  if v_attempt_count > 5 then
+    return jsonb_build_object('ok', false, 'message', 'Too many attempts. Try again in 15 minutes.');
+  end if;
+  if char_length(v_name) not between 2 and 60 or coalesce(p_pin, '') !~ '^[0-9]{6}$' then
+    return jsonb_build_object('ok', false, 'message', 'FanClub name or PIN is incorrect.');
+  end if;
+  select * into v_fanclub from public.fanclubs
+  where lower(trim(name)) = lower(v_name);
+  if not found or extensions.crypt(p_pin, v_fanclub.pin_hash) <> v_fanclub.pin_hash then
+    return jsonb_build_object('ok', false, 'message', 'FanClub name or PIN is incorrect.');
+  end if;
+  insert into public.fanclub_members (fanclub_id, user_id, role)
+  values (v_fanclub.id, auth.uid(), 'member')
+  on conflict (fanclub_id, user_id) do nothing;
+  update public.fanclub_join_attempts set attempt_count = 0, window_started_at = now()
+  where user_id = auth.uid();
+  update public.tournaments set fanclub_id = v_fanclub.id
+  where owner_id = auth.uid() and fanclub_id is null;
+  return jsonb_build_object('ok', true, 'id', v_fanclub.id, 'name', v_fanclub.name);
+end;
+$$;
+
+revoke all on function public.is_fanclub_member(uuid) from public, anon;
+revoke all on function public.create_fanclub(text, text) from public, anon;
+revoke all on function public.join_fanclub(text, text) from public, anon;
+revoke all on function public.create_tournament_with_teams(uuid, text, text, date, date, text, uuid[]) from public, anon;
+grant execute on function public.is_fanclub_member(uuid) to authenticated;
+grant execute on function public.create_fanclub(text, text) to authenticated;
+grant execute on function public.join_fanclub(text, text) to authenticated;
+grant execute on function public.create_tournament_with_teams(uuid, text, text, date, date, text, uuid[]) to authenticated;
+
+begin;
+
+alter table public.fanclubs rename to clubs;
+alter table public.fanclub_members rename to club_members;
+alter table public.fanclub_join_attempts rename to club_join_attempts;
+alter table public.club_members rename column fanclub_id to club_id;
+alter table public.tournaments rename column fanclub_id to club_id;
+
+alter index public.fanclubs_name_ci_unique rename to clubs_name_ci_unique;
+alter index public.fanclub_members_user_idx rename to club_members_user_idx;
+alter index public.tournaments_fanclub_created_idx rename to tournaments_club_created_idx;
+
+alter table public.clubs rename constraint fanclubs_pkey to clubs_pkey;
+alter table public.clubs rename constraint fanclubs_owner_id_fkey to clubs_owner_id_fkey;
+alter table public.club_members rename constraint fanclub_members_pkey to club_members_pkey;
+alter table public.club_members rename constraint fanclub_members_fanclub_id_fkey to club_members_club_id_fkey;
+alter table public.club_members rename constraint fanclub_members_user_id_fkey to club_members_user_id_fkey;
+alter table public.club_members rename constraint fanclub_members_fanclub_id_user_id_key to club_members_club_id_user_id_key;
+alter table public.club_join_attempts rename constraint fanclub_join_attempts_pkey to club_join_attempts_pkey;
+alter table public.club_join_attempts rename constraint fanclub_join_attempts_user_id_fkey to club_join_attempts_user_id_fkey;
+alter table public.tournaments rename constraint tournaments_fanclub_id_fkey to tournaments_club_id_fkey;
+
+ drop policy fanclub_members_read_self on public.club_members;
+drop policy tournaments_insert_fanclub_owner on public.tournaments;
+drop policy tournaments_update_owner on public.tournaments;
+drop trigger tournament_fanclub_guard on public.tournaments;
+drop function public.protect_tournament_fanclub();
+drop function public.create_tournament_with_teams(uuid, text, text, date, date, text, uuid[]);
+drop function public.create_fanclub(text, text);
+drop function public.join_fanclub(text, text);
+drop function public.is_fanclub_member(uuid);
+
+create function public.is_club_member(p_club_id uuid)
+returns boolean language sql stable security definer set search_path = '' as $$
+  select exists (
+    select 1 from public.club_members m
+    where m.club_id = p_club_id and m.user_id = auth.uid()
+  );
+$$;
+
+create or replace function public.is_tournament_member(p_tournament_id uuid)
+returns boolean language sql stable security definer set search_path = '' as $$
+  select exists (
+    select 1 from public.tournament_members tm
+    where tm.tournament_id = p_tournament_id and tm.user_id = auth.uid()
+  ) or exists (
+    select 1
+    from public.tournaments t
+    join public.club_members cm on cm.club_id = t.club_id
+    where t.id = p_tournament_id and cm.user_id = auth.uid()
+  );
+$$;
+
+create function public.protect_tournament_club()
+returns trigger language plpgsql set search_path = '' as $$
+begin
+  if tg_op = 'INSERT' then
+    if new.club_id is null or not public.is_club_member(new.club_id) then
+      raise exception 'A tournament must belong to one of your Clubs.' using errcode = '42501';
+    end if;
+  elsif current_user = 'authenticated' and new.club_id is distinct from old.club_id then
+    raise exception 'Tournament Club cannot be changed directly.' using errcode = '42501';
+  end if;
+  return new;
+end;
+$$;
+create trigger tournament_club_guard
+before insert or update on public.tournaments
+for each row execute function public.protect_tournament_club();
+
+create policy club_members_read_self on public.club_members
+for select to authenticated using (user_id = auth.uid());
+
+create policy tournaments_insert_club_owner on public.tournaments
+for insert to authenticated
+with check (
+  owner_id = auth.uid()
+  and club_id is not null
+  and public.is_club_member(club_id)
+);
+
+create policy tournaments_update_owner on public.tournaments
+for update to authenticated
+using (owner_id = auth.uid())
+with check (
+  owner_id = auth.uid()
+  and club_id is not null
+  and public.is_club_member(club_id)
+);
+
+create function public.create_tournament_with_teams(
+  p_club_id uuid,
+  p_name text,
+  p_description text,
+  p_start_date date,
+  p_end_date date,
+  p_timezone text,
+  p_team_ids uuid[]
+)
+returns uuid language plpgsql security definer set search_path = '' as $$
+declare
+  v_tournament_id uuid;
+  v_team_count integer;
+  v_unique_count integer;
+  v_timezone text;
+begin
+  if auth.uid() is null then raise exception 'Authentication required.' using errcode = '28000'; end if;
+  if not public.is_club_member(p_club_id) then raise exception 'Join a Club before creating a tournament.' using errcode = '42501'; end if;
+  if char_length(trim(coalesce(p_name, ''))) not between 1 and 100 then raise exception 'Tournament name is required.' using errcode = '22023'; end if;
+  if coalesce(array_length(p_team_ids, 1), 0) < 2 then raise exception 'Select at least two teams.' using errcode = '22023'; end if;
+  if p_start_date is not null and p_end_date is not null and p_end_date < p_start_date then raise exception 'End date must not be before start date.' using errcode = '22023'; end if;
+  v_timezone := coalesce(nullif(trim(p_timezone), ''), 'UTC');
+  if not exists (select 1 from pg_catalog.pg_timezone_names where name = v_timezone) then raise exception 'Unknown time zone.' using errcode = '22023'; end if;
+  select count(*), count(distinct id) into v_team_count, v_unique_count
+  from public.teams where id = any(p_team_ids);
+  if v_team_count <> array_length(p_team_ids, 1) or v_unique_count <> v_team_count then
+    raise exception 'Every selected team must exist and be unique.' using errcode = '22023';
+  end if;
+  insert into public.tournaments (owner_id, club_id, name, description, start_date, end_date, timezone)
+  values (auth.uid(), p_club_id, trim(p_name), nullif(trim(coalesce(p_description, '')), ''), p_start_date, p_end_date, v_timezone)
+  returning id into v_tournament_id;
+  insert into public.tournament_teams (tournament_id, team_id, seed)
+  select v_tournament_id, team_id, ordinality::integer
+  from unnest(p_team_ids) with ordinality as selected(team_id, ordinality);
+  insert into public.activity_events (tournament_id, actor_id, event_type, metadata)
+  values (v_tournament_id, auth.uid(), 'tournament_created', jsonb_build_object('team_count', v_team_count));
+  return v_tournament_id;
+end;
+$$;
+
+create function public.create_club(p_name text, p_pin text)
+returns jsonb language plpgsql security definer set search_path = '' as $$
+declare
+  v_club_id uuid;
+  v_name text := trim(coalesce(p_name, ''));
+begin
+  if auth.uid() is null then raise exception 'Authentication required.' using errcode = '28000'; end if;
+  if char_length(v_name) not between 2 and 60 then raise exception 'Club name must be between 2 and 60 characters.' using errcode = '22023'; end if;
+  if coalesce(p_pin, '') !~ '^[0-9]{6}$' then raise exception 'PIN must be exactly six digits.' using errcode = '22023'; end if;
+  insert into public.clubs (name, owner_id, pin_hash)
+  values (v_name, auth.uid(), extensions.crypt(p_pin, extensions.gen_salt('bf', 12)))
+  returning id into v_club_id;
+  insert into public.club_members (club_id, user_id, role)
+  values (v_club_id, auth.uid(), 'owner');
+  update public.tournaments set club_id = v_club_id
+  where owner_id = auth.uid() and club_id is null;
+  return jsonb_build_object('ok', true, 'id', v_club_id, 'name', v_name);
+exception when unique_violation then
+  raise exception 'A Club with that name already exists.' using errcode = '23505';
+end;
+$$;
+
+create function public.join_club(p_name text, p_pin text)
+returns jsonb language plpgsql security definer set search_path = '' as $$
+declare
+  v_name text := trim(coalesce(p_name, ''));
+  v_club public.clubs%rowtype;
+  v_attempt_count integer;
+begin
+  if auth.uid() is null then raise exception 'Authentication required.' using errcode = '28000'; end if;
+  insert into public.club_join_attempts as attempts (user_id, attempt_count, window_started_at)
+  values (auth.uid(), 1, now())
+  on conflict (user_id) do update set
+    attempt_count = case
+      when attempts.window_started_at < now() - interval '15 minutes' then 1
+      else attempts.attempt_count + 1
+    end,
+    window_started_at = case
+      when attempts.window_started_at < now() - interval '15 minutes' then now()
+      else attempts.window_started_at
+    end
+  returning attempts.attempt_count into v_attempt_count;
+  if v_attempt_count > 5 then
+    return jsonb_build_object('ok', false, 'message', 'Too many attempts. Try again in 15 minutes.');
+  end if;
+  if char_length(v_name) not between 2 and 60 or coalesce(p_pin, '') !~ '^[0-9]{6}$' then
+    return jsonb_build_object('ok', false, 'message', 'Club name or PIN is incorrect.');
+  end if;
+  select * into v_club from public.clubs
+  where lower(trim(name)) = lower(v_name);
+  if not found or extensions.crypt(p_pin, v_club.pin_hash) <> v_club.pin_hash then
+    return jsonb_build_object('ok', false, 'message', 'Club name or PIN is incorrect.');
+  end if;
+  insert into public.club_members (club_id, user_id, role)
+  values (v_club.id, auth.uid(), 'member')
+  on conflict (club_id, user_id) do nothing;
+  update public.club_join_attempts set attempt_count = 0, window_started_at = now()
+  where user_id = auth.uid();
+  update public.tournaments set club_id = v_club.id
+  where owner_id = auth.uid() and club_id is null;
+  return jsonb_build_object('ok', true, 'id', v_club.id, 'name', v_club.name);
+end;
+$$;
+
+revoke all on function public.is_club_member(uuid) from public, anon;
+revoke all on function public.create_club(text, text) from public, anon;
+revoke all on function public.join_club(text, text) from public, anon;
+revoke all on function public.create_tournament_with_teams(uuid, text, text, date, date, text, uuid[]) from public, anon;
+grant execute on function public.is_club_member(uuid) to authenticated;
+grant execute on function public.create_club(text, text) to authenticated;
+grant execute on function public.join_club(text, text) to authenticated;
+grant execute on function public.create_tournament_with_teams(uuid, text, text, date, date, text, uuid[]) to authenticated;
+
+commit;
+
+
+create function public.delete_tournament(p_tournament_id uuid)
+returns void language plpgsql security definer set search_path = '' as $$
+begin
+  if auth.uid() is null or not public.is_tournament_owner(p_tournament_id) then
+    raise exception 'Only the tournament creator can delete this tournament.' using errcode = '42501';
+  end if;
+
+  delete from public.fixtures where tournament_id = p_tournament_id;
+  delete from public.matchdays where tournament_id = p_tournament_id;
+  delete from public.tournaments where id = p_tournament_id;
+end;
+$$;
+
+create function public.remove_tournament_team(
+  p_tournament_id uuid,
+  p_team_id uuid
+)
+returns void language plpgsql security definer set search_path = '' as $$
+begin
+  if auth.uid() is null or not public.is_tournament_owner(p_tournament_id) then
+    raise exception 'Only the tournament creator can remove teams.' using errcode = '42501';
+  end if;
+  if not exists (
+    select 1 from public.tournament_teams
+    where tournament_id = p_tournament_id and team_id = p_team_id
+  ) then
+    raise exception 'Team is not part of this tournament.' using errcode = '22023';
+  end if;
+
+  delete from public.notifications n
+  using public.fixtures f
+  where f.tournament_id = p_tournament_id
+    and (f.home_team_id = p_team_id or f.away_team_id = p_team_id)
+    and n.tournament_id = p_tournament_id
+    and n.entity_type = 'fixture'
+    and n.entity_id = f.id;
+  delete from public.fixtures
+  where tournament_id = p_tournament_id
+    and (home_team_id = p_team_id or away_team_id = p_team_id);
+  delete from public.tournament_teams
+  where tournament_id = p_tournament_id and team_id = p_team_id;
+  delete from public.matchdays md
+  where md.tournament_id = p_tournament_id
+    and not exists (select 1 from public.fixtures f where f.matchday_id = md.id);
+  update public.tournaments
+  set status = 'active'
+  where id = p_tournament_id
+    and not exists (
+      select 1 from public.fixtures
+      where tournament_id = p_tournament_id and stage = 'final'
+    );
+  insert into public.activity_events (tournament_id, actor_id, event_type, metadata)
+  values (
+    p_tournament_id,
+    auth.uid(),
+    'team_removed',
+    jsonb_build_object('team_id', p_team_id)
+  );
+end;
+$$;
+
+create function public.delete_tournament_fixture(p_fixture_id uuid)
+returns void language plpgsql security definer set search_path = '' as $$
+declare
+  v_fixture public.fixtures%rowtype;
+begin
+  select * into v_fixture
+  from public.fixtures
+  where id = p_fixture_id
+  for update;
+  if not found then
+    raise exception 'Fixture not found.' using errcode = 'P0002';
+  end if;
+  if auth.uid() is null or not public.is_tournament_owner(v_fixture.tournament_id) then
+    raise exception 'Only the tournament creator can delete fixtures.' using errcode = '42501';
+  end if;
+
+  delete from public.notifications
+  where tournament_id = v_fixture.tournament_id
+    and entity_type = 'fixture'
+    and entity_id = p_fixture_id;
+  delete from public.fixtures where id = p_fixture_id;
+  if v_fixture.matchday_id is not null then
+    delete from public.matchdays md
+    where md.id = v_fixture.matchday_id
+      and not exists (select 1 from public.fixtures f where f.matchday_id = md.id);
+  end if;
+  if v_fixture.stage = 'final' then
+    update public.tournaments set status = 'active' where id = v_fixture.tournament_id;
+  end if;
+  insert into public.activity_events (tournament_id, actor_id, event_type, entity_type, entity_id)
+  values (
+    v_fixture.tournament_id,
+    auth.uid(),
+    'fixture_deleted',
+    'fixture',
+    p_fixture_id
+  );
+end;
+$$;
+
+revoke all on function public.delete_tournament(uuid) from public, anon;
+revoke all on function public.remove_tournament_team(uuid, uuid) from public, anon;
+revoke all on function public.delete_tournament_fixture(uuid) from public, anon;
+grant execute on function public.delete_tournament(uuid) to authenticated;
+grant execute on function public.remove_tournament_team(uuid, uuid) to authenticated;
+grant execute on function public.delete_tournament_fixture(uuid) to authenticated;
+
+notify pgrst, 'reload schema';
+
+
+create function public.prevent_completed_tournament_fixture_changes()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_tournament_status text;
+begin
+  select status into v_tournament_status
+  from public.tournaments
+  where id = case when tg_op = 'UPDATE' then old.tournament_id else new.tournament_id end
+  for update;
+
+  if v_tournament_status = 'completed' then
+    raise exception 'Fixtures cannot be changed after tournament completion.'
+      using errcode = '55000';
+  end if;
+
+  if tg_op = 'UPDATE' and new.tournament_id is distinct from old.tournament_id then
+    select status into v_tournament_status
+    from public.tournaments
+    where id = new.tournament_id
+    for update;
+
+    if v_tournament_status = 'completed' then
+      raise exception 'Fixtures cannot be changed after tournament completion.'
+        using errcode = '55000';
+    end if;
+  end if;
+
+  return new;
+end;
+$$;
+
+create trigger completed_tournament_fixture_guard
+before insert or update on public.fixtures
+for each row execute function public.prevent_completed_tournament_fixture_changes();
+
+create or replace function public.remove_tournament_team(
+  p_tournament_id uuid,
+  p_team_id uuid
+)
+returns void language plpgsql security definer set search_path = '' as $$
+begin
+  if auth.uid() is null or not public.is_tournament_owner(p_tournament_id) then
+    raise exception 'Only the tournament creator can remove teams.' using errcode = '42501';
+  end if;
+  if exists (
+    select 1 from public.tournaments
+    where id = p_tournament_id and status = 'completed'
+  ) then
+    raise exception 'Teams cannot be removed after tournament completion.' using errcode = '55000';
+  end if;
+  if not exists (
+    select 1 from public.tournament_teams
+    where tournament_id = p_tournament_id and team_id = p_team_id
+  ) then
+    raise exception 'Team is not part of this tournament.' using errcode = '22023';
+  end if;
+
+  delete from public.notifications n
+  using public.fixtures f
+  where f.tournament_id = p_tournament_id
+    and (f.home_team_id = p_team_id or f.away_team_id = p_team_id)
+    and n.tournament_id = p_tournament_id
+    and n.entity_type = 'fixture'
+    and n.entity_id = f.id;
+  delete from public.fixtures
+  where tournament_id = p_tournament_id
+    and (home_team_id = p_team_id or away_team_id = p_team_id);
+  delete from public.tournament_teams
+  where tournament_id = p_tournament_id and team_id = p_team_id;
+  delete from public.matchdays md
+  where md.tournament_id = p_tournament_id
+    and not exists (select 1 from public.fixtures f where f.matchday_id = md.id);
+  update public.tournaments
+  set status = 'active'
+  where id = p_tournament_id
+    and not exists (
+      select 1 from public.fixtures
+      where tournament_id = p_tournament_id and stage = 'final'
+    );
+  insert into public.activity_events (tournament_id, actor_id, event_type, metadata)
+  values (
+    p_tournament_id,
+    auth.uid(),
+    'team_removed',
+    jsonb_build_object('team_id', p_team_id)
+  );
+end;
+$$;
+
+create or replace function public.delete_tournament_fixture(p_fixture_id uuid)
+returns void language plpgsql security definer set search_path = '' as $$
+declare
+  v_fixture public.fixtures%rowtype;
+begin
+  select * into v_fixture
+  from public.fixtures
+  where id = p_fixture_id
+  for update;
+  if not found then
+    raise exception 'Fixture not found.' using errcode = 'P0002';
+  end if;
+  if auth.uid() is null or not public.is_tournament_owner(v_fixture.tournament_id) then
+    raise exception 'Only the tournament creator can delete fixtures.' using errcode = '42501';
+  end if;
+  if exists (
+    select 1 from public.tournaments
+    where id = v_fixture.tournament_id and status = 'completed'
+  ) then
+    raise exception 'Fixtures cannot be deleted after tournament completion.' using errcode = '55000';
+  end if;
+
+  delete from public.notifications
+  where tournament_id = v_fixture.tournament_id
+    and entity_type = 'fixture'
+    and entity_id = p_fixture_id;
+  delete from public.fixtures where id = p_fixture_id;
+  if v_fixture.matchday_id is not null then
+    delete from public.matchdays md
+    where md.id = v_fixture.matchday_id
+      and not exists (select 1 from public.fixtures f where f.matchday_id = md.id);
+  end if;
+  if v_fixture.stage = 'final' then
+    update public.tournaments set status = 'active' where id = v_fixture.tournament_id;
+  end if;
+  insert into public.activity_events (tournament_id, actor_id, event_type, entity_type, entity_id)
+  values (
+    v_fixture.tournament_id,
+    auth.uid(),
+    'fixture_deleted',
+    'fixture',
+    p_fixture_id
+  );
+end;
+$$;
+
+revoke all on function public.prevent_completed_tournament_fixture_changes() from public, anon;
+
+notify pgrst, 'reload schema';
+
+
+create function public.delete_team(p_team_id uuid)
+returns void
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_team public.teams%rowtype;
+  v_tournament_name text;
+begin
+  select * into v_team
+  from public.teams
+  where id = p_team_id
+  for update;
+
+  if not found then
+    raise exception 'Team not found.' using errcode = 'P0002';
+  end if;
+
+  if auth.uid() is null or v_team.owner_id <> auth.uid() then
+    raise exception 'Only the team creator can delete this team.'
+      using errcode = '42501';
+  end if;
+
+  select t.name into v_tournament_name
+  from public.tournaments t
+  where t.status in ('active', 'completed')
+    and (
+      exists (
+        select 1 from public.tournament_teams tt
+        where tt.tournament_id = t.id and tt.team_id = p_team_id
+      )
+      or exists (
+        select 1 from public.fixtures f
+        where f.tournament_id = t.id
+          and (f.home_team_id = p_team_id or f.away_team_id = p_team_id)
+      )
+    )
+  order by t.created_at desc
+  limit 1;
+
+  if v_tournament_name is not null then
+    raise exception 'This team is being used by tournament "%".', v_tournament_name
+      using errcode = '55000';
+  end if;
+
+  delete from public.teams where id = p_team_id;
+end;
+$$;
+
+revoke all on function public.delete_team(uuid) from public, anon;
+grant execute on function public.delete_team(uuid) to authenticated;
+
+notify pgrst, 'reload schema';
+
+

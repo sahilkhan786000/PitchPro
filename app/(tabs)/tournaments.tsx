@@ -59,10 +59,6 @@ function TournamentsContent() {
     mutationFn: (tournamentId: string) => deleteTournament(tournamentId),
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ["tournaments"] });
-      await queryClient.invalidateQueries({ queryKey: ["notifications"] });
-      await queryClient.invalidateQueries({
-        queryKey: ["unread-notification-count"],
-      });
       setDeleteTarget(null);
     },
   });
@@ -172,7 +168,20 @@ function TournamentsContent() {
         ) : null}
         <View style={styles.list}>
           {filtered.map((item) => (
-            <View key={item.id} style={styles.card}>
+            <View
+              key={item.id}
+              style={[
+                styles.card,
+                item.status === "active" && styles.cardActive,
+              ]}
+            >
+              <View
+                pointerEvents="none"
+                style={[
+                  styles.cardAtmosphere,
+                  item.status === "completed" && styles.cardAtmosphereComplete,
+                ]}
+              />
               <View style={styles.cardHead}>
                 <View
                   style={[
@@ -210,7 +219,10 @@ function TournamentsContent() {
                     params: { id: item.id },
                   })
                 }
-                style={styles.cardMain}
+                style={({ pressed }) => [
+                  styles.cardMain,
+                  pressed && styles.cardMainPressed,
+                ]}
               >
                 <Text style={styles.cardTitle}>{item.name}</Text>
                 <Text style={styles.description} numberOfLines={2}>
@@ -255,7 +267,7 @@ function TournamentsContent() {
             <Text style={styles.confirmTitle}>Delete tournament?</Text>
             <Text style={styles.confirmBody}>
               “{deleteTarget?.name}” and its teams-in-tournament, fixtures,
-              results, and updates will be permanently deleted. Your teams will
+              results, and activity history will be permanently deleted. Your teams will
               remain in your club.
             </Text>
             {deleteMutation.error ? (
@@ -346,11 +358,28 @@ const styles = createThemedStyles({
   filterTextActive: { color: colors.accent },
   list: { gap: 9 },
   card: {
+    position: "relative",
     padding: spacing.lg,
     backgroundColor: colors.surface,
     borderWidth: 1,
     borderColor: colors.border,
     borderRadius: radii.md,
+    overflow: "hidden",
+  },
+  cardActive: { borderColor: colors.accent },
+  cardAtmosphere: {
+    position: "absolute",
+    right: -52,
+    top: -42,
+    width: 136,
+    height: 112,
+    borderRadius: radii.pill,
+    backgroundColor: colors.accent,
+    opacity: 0.055,
+  },
+  cardAtmosphereComplete: {
+    backgroundColor: colors.gold,
+    opacity: 0.07,
   },
   cardHead: { flexDirection: "row", alignItems: "center", gap: 7 },
   deleteIcon: {
@@ -362,6 +391,7 @@ const styles = createThemedStyles({
     backgroundColor: colors.elevated,
   },
   cardMain: { marginTop: -3 },
+  cardMainPressed: { opacity: 0.82 },
   dot: { width: 7, height: 7, borderRadius: 4, backgroundColor: colors.accent },
   dotComplete: { backgroundColor: colors.gold },
   status: {

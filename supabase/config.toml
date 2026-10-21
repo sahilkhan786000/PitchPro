@@ -1,4 +1,7 @@
 project_id = "pitchpro"
 
+[auth.email]
+enable_confirmations = false
+
 [functions.send-tournament-push]
 verify_jwt = true

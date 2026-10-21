@@ -1,15 +1,19 @@
 import { Link } from "expo-router";
-import { ArrowRight, LockKeyhole, Settings2 } from "lucide-react-native";
+import { ArrowRight, LockKeyhole } from "lucide-react-native";
+import { useRef } from "react";
 import { Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
+import { AuthGlassPanel } from "./AuthGlassPanel";
+import { AuthVideoBackground } from "./AuthVideoBackground";
 import { useAuth } from "../lib/auth";
 import { supabaseConfigured } from "../lib/supabase";
-import { useThemeRefresh } from "../theme/ThemeContext";
+import { useAppTheme } from "../theme/ThemeContext";
 import { colors, createThemedStyles, radii, spacing } from "../theme/tokens";
 
 export function AuthGate({ children }: { children: React.ReactNode }) {
-  useThemeRefresh();
+  const { mode } = useAppTheme();
+  const blurTargetRef = useRef<React.ComponentRef<typeof View> | null>(null);
   const { session, loading } = useAuth();
 
   if (loading) {
@@ -23,14 +27,10 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
   if (!supabaseConfigured) {
     return (
       <SafeAreaView style={styles.page}>
-        <View style={styles.lockup}>
-          <Settings2 color={colors.accent} size={18} />
-          <Text style={styles.brand}>PITCHPRO</Text>
-        </View>
         <View style={styles.panel}>
           <Text style={styles.kicker}>BACKEND SETUP</Text>
           <Text style={styles.title}>Bring your competition online.</Text>
-          <Text style={styles.body}>
+          <Text style={[styles.body, mode === "light" && styles.lightMutedText]}>
             Add your Supabase project URL and publishable key to the local
             environment, then apply the database migration.
           </Text>
@@ -46,27 +46,41 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
   if (!session) {
     return (
       <SafeAreaView style={styles.page}>
-        <View style={styles.lockup}>
-          <Settings2 color={colors.accent} size={18} />
-          <Text style={styles.brand}>PITCHPRO</Text>
-        </View>
-        <View style={styles.panel}>
+        <AuthVideoBackground blurTargetRef={blurTargetRef} />
+        <AuthGlassPanel blurTargetRef={blurTargetRef} style={styles.panel}>
           <View style={styles.icon}>
             <LockKeyhole color={colors.accent} size={22} />
           </View>
-          <Text style={styles.kicker}>YOUR COMPETITION HQ</Text>
+          <Text
+            style={[styles.kicker, mode === "light" && styles.lightAccentText]}
+          >
+            YOUR COMPETITION HQ
+          </Text>
           <Text style={styles.title}>Every match has a story.</Text>
-          <Text style={styles.body}>
+          <Text style={[styles.body, mode === "light" && styles.lightMutedText]}>
             Sign in to manage teams, run fixtures, and follow the table as
             results come in.
           </Text>
           <Link href="/login" style={styles.primaryLink}>
-            Sign in <ArrowRight color={colors.background} size={17} />
+            <View style={styles.primaryLinkContent}>
+              <Text
+                style={[
+                  styles.primaryLinkText,
+                  mode === "light" && styles.lightButtonText,
+                ]}
+              >
+                Sign in
+              </Text>
+              <ArrowRight
+                color={mode === "light" ? colors.text : colors.background}
+                size={17}
+              />
+            </View>
           </Link>
           <Link href="/signup" style={styles.secondaryLink}>
             Create account
           </Link>
-        </View>
+        </AuthGlassPanel>
       </SafeAreaView>
     );
   }
@@ -77,7 +91,8 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
 const styles = createThemedStyles({
   page: {
     flex: 1,
-    backgroundColor: colors.background,
+    position: "relative",
+    backgroundColor: "transparent",
     padding: spacing.xl,
     justifyContent: "center",
   },
@@ -87,28 +102,10 @@ const styles = createThemedStyles({
     alignItems: "center",
     justifyContent: "center",
   },
-  lockup: {
-    position: "absolute",
-    top: 60,
-    left: spacing.xl,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 9,
-  },
-  brand: {
-    color: colors.text,
-    fontSize: 13,
-    fontWeight: "900",
-    letterSpacing: 1.3,
-  },
   panel: {
     width: "100%",
     maxWidth: 460,
     alignSelf: "center",
-    borderRadius: radii.lg,
-    borderWidth: 1,
-    borderColor: colors.border,
-    backgroundColor: colors.surface,
     padding: spacing.xl,
   },
   icon: {
@@ -149,16 +146,27 @@ const styles = createThemedStyles({
   codeText: { color: colors.accent, fontFamily: "SpaceMono", fontSize: 11 },
   primaryLink: {
     minHeight: 48,
+    display: "flex",
     borderRadius: radii.sm,
     paddingHorizontal: spacing.lg,
     backgroundColor: colors.accent,
     alignItems: "center",
-    justifyContent: "space-between",
-    flexDirection: "row",
-    color: colors.background,
-    fontWeight: "900",
+    justifyContent: "center",
     overflow: "hidden",
   },
+  primaryLinkContent: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: spacing.sm,
+  },
+  primaryLinkText: {
+    color: colors.background,
+    fontWeight: "900",
+  },
+  lightButtonText: { color: colors.text },
+  lightAccentText: { color: "#0C416B" },
+  lightMutedText: { color: "#1D2A3A" },
   secondaryLink: {
     color: colors.text,
     fontWeight: "800",

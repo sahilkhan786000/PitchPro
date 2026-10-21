@@ -24,9 +24,9 @@ In Supabase Dashboard, create a Database Webhook for `public.notifications`, `IN
 ## EAS and Native IDs
 
 1. Create or select an EAS project and run `npx eas-cli init`.
-2. Copy the generated EAS project UUID to `EXPO_PUBLIC_EAS_PROJECT_ID` in local `.env` and to the EAS `production` environment.
+2. Link the generated EAS project UUID to this app.
 3. Set `PITCHPRO_ANDROID_PACKAGE` and `PITCHPRO_IOS_BUNDLE_ID` to identifiers you own. The app intentionally does not claim third-party identifiers.
-4. Add `EXPO_PUBLIC_SUPABASE_URL`, either `EXPO_PUBLIC_SUPABASE_KEY` or `EXPO_PUBLIC_SUPABASE_ANON_KEY`, `EXPO_PUBLIC_EAS_PROJECT_ID`, `PITCHPRO_ANDROID_PACKAGE`, and `PITCHPRO_IOS_BUNDLE_ID` to EAS environments used for builds. These Supabase client values are public configuration, not service-role credentials.
+4. Add `EXPO_PUBLIC_SUPABASE_URL`, either `EXPO_PUBLIC_SUPABASE_KEY` or `EXPO_PUBLIC_SUPABASE_ANON_KEY`, `PITCHPRO_ANDROID_PACKAGE`, and `PITCHPRO_IOS_BUNDLE_ID` to EAS environments used for builds. These Supabase client values are public configuration, not service-role credentials.
 5. Keep EAS credentials remote unless your organization requires local signing material.
 
 `eas.json` provides development, preview, and production profiles:
@@ -47,7 +47,7 @@ The production Android output is an `.aab`. iOS store builds require Apple Devel
 - Android: configure an FCM v1 service account in EAS credentials for the Android application.
 - iOS: configure an APNs key in EAS credentials under an Apple Developer team. A paid Apple Developer account is required for device distribution.
 - Install a development build before testing remote notifications. Expo Go is insufficient for Android remote push.
-- Register test devices using Profile > Push updates, then test with Expo's notification tooling and the Supabase webhook.
+- The app no longer provides device registration or push opt-in; any legacy device tokens must be managed outside the app.
 
 ## Store Readiness Checklist
 
@@ -55,9 +55,9 @@ The production Android output is an `.aab`. iOS store builds require Apple Devel
 - Unique Android application ID and iOS bundle ID, owned by the publisher.
 - Google Play Console account and signing; Apple Developer Program and App Store Connect.
 - Privacy policy URL authored and hosted by the publisher. Do not invent or reuse an unrelated URL.
-- Disclose account email/name, team logo uploads, push token use, and tournament activity notifications.
+- Disclose account email/name, team logo uploads, and tournament activity data.
 - Test account lifecycle, data deletion, support contact, age rating, and review credentials.
-- Validate tablet/phone layouts, accessibility, deep links, offline/error behavior, and notification permissions.
+- Validate tablet/phone layouts, accessibility, deep links, and offline/error behavior.
 - Submit Android internal testing first; use TestFlight for iOS before production review.
 
 Store approval, signing, and distribution require the publisher's credentials and have not been performed here.

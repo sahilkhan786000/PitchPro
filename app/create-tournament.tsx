@@ -90,8 +90,9 @@ function CreateTournamentContent() {
   const [search, setSearch] = useState("");
   const queryClient = useQueryClient();
   const teamsQuery = useQuery({
-    queryKey: ["eligible-teams"],
-    queryFn: () => listTeams(),
+    queryKey: ["eligible-teams", club?.id],
+    queryFn: () => listTeams(club?.id ?? ""),
+    enabled: Boolean(session && club),
     staleTime: 0,
   });
   const {
@@ -111,11 +112,16 @@ function CreateTournamentContent() {
       ),
     [search, teamsQuery.data],
   );
+  const clubTeamIds = new Set((teamsQuery.data ?? []).map((team) => team.id));
+  const selectedInClub = selected.filter((id) => clubTeamIds.has(id));
   const counts =
-    selected.length >= 2 ? getCompetitionCounts(selected.length) : null;
+    selectedInClub.length >= 2
+      ? getCompetitionCounts(selectedInClub.length)
+      : null;
   const mutation = useMutation({
     mutationFn: async () => {
-      if (selected.length < 2) throw new Error("Select at least two teams.");
+      if (selectedInClub.length < 2)
+        throw new Error("Select at least two teams from this Club.");
       if (!club) throw new Error("Enter a Club before creating a tournament.");
       const values = schema.parse(getValues());
       return createTournament({
@@ -125,7 +131,7 @@ function CreateTournamentContent() {
         startDate: values.startDate || null,
         endDate: values.endDate || null,
         timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
-        teamIds: selected,
+        teamIds: selectedInClub,
       });
     },
     onSuccess: async (id) => {

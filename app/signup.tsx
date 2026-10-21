@@ -1,7 +1,7 @@
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Link, router, useLocalSearchParams } from "expo-router";
-import { ArrowLeft, Eye, EyeOff, Trophy } from "lucide-react-native";
-import { useState } from "react";
+import { ArrowLeft, Eye, EyeOff } from "lucide-react-native";
+import { useRef, useState } from "react";
 import { Controller, useForm } from "react-hook-form";
 import {
   KeyboardAvoidingView,
@@ -15,8 +15,10 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import { z } from "zod";
 
+import { AuthGlassPanel } from "@/src/components/AuthGlassPanel";
+import { AuthVideoBackground } from "@/src/components/AuthVideoBackground";
 import { useAuth } from "@/src/lib/auth";
-import { useThemeRefresh } from "@/src/theme/ThemeContext";
+import { useAppTheme } from "@/src/theme/ThemeContext";
 import { colors, createThemedStyles, radii, spacing } from "@/src/theme/tokens";
 
 const schema = z
@@ -40,13 +42,13 @@ const schema = z
 type SignupValues = z.infer<typeof schema>;
 
 export default function SignupScreen() {
-  useThemeRefresh();
+  const { mode } = useAppTheme();
+  const blurTargetRef = useRef<React.ComponentRef<typeof View> | null>(null);
   const { signUp } = useAuth();
   const params = useLocalSearchParams<{ next?: string }>();
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
   const [formError, setFormError] = useState("");
-  const [complete, setComplete] = useState(false);
   const {
     control,
     handleSubmit,
@@ -71,18 +73,8 @@ export default function SignupScreen() {
               params: { token: params.next.slice("/join/".length) },
             }
           : "/(tabs)";
-      const emailRedirectTo =
-        typeof params.next === "string" && params.next.startsWith("/join/")
-          ? `pitchpro://${params.next.slice(1)}`
-          : undefined;
-      const signedIn = await signUp(
-        values.fullName,
-        values.email.trim(),
-        values.password,
-        emailRedirectTo,
-      );
-      if (signedIn) router.replace(nextPath);
-      else setComplete(true);
+      await signUp(values.fullName, values.email.trim(), values.password);
+      router.replace(nextPath);
     } catch (error) {
       setFormError(
         error instanceof Error
@@ -94,6 +86,7 @@ export default function SignupScreen() {
 
   return (
     <SafeAreaView style={styles.safe}>
+      <AuthVideoBackground blurTargetRef={blurTargetRef} />
       <KeyboardAvoidingView
         style={styles.safe}
         behavior={Platform.OS === "ios" ? "padding" : undefined}
@@ -102,100 +95,89 @@ export default function SignupScreen() {
           contentContainerStyle={styles.page}
           keyboardShouldPersistTaps="handled"
         >
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="Back"
-            onPress={() => router.back()}
-            style={styles.back}
-          >
-            <ArrowLeft color={colors.muted} size={19} />
-          </Pressable>
-          <View style={styles.brand}>
-            <View style={styles.brandIcon}>
-              <Trophy color={colors.background} size={16} />
-            </View>
-            <Text style={styles.brandText}>PITCHPRO</Text>
-          </View>
-          <Text style={styles.kicker}>
-            {complete ? "ONE LAST STEP" : "START YOUR SEASON"}
-          </Text>
-          <Text style={styles.title}>
-            {complete ? "Check your inbox." : "Create your account."}
-          </Text>
-          <Text style={styles.subtitle}>
-            {complete
-              ? "If email verification is enabled, follow the link we sent to finish setting up your manager profile."
-              : "One account for every team, tournament, and matchday."}
-          </Text>
-
-          {!complete ? (
-            <>
-              <Field
-                label="FULL NAME"
-                name="fullName"
-                control={control}
-                error={errors.fullName?.message}
-                placeholder="Your name"
-                autoCapitalize="words"
-              />
-              <Field
-                label="EMAIL"
-                name="email"
-                control={control}
-                error={errors.email?.message}
-                placeholder="you@example.com"
-                keyboardType="email-address"
-                autoCapitalize="none"
-              />
-              <PasswordField
-                label="PASSWORD"
-                name="password"
-                control={control}
-                error={errors.password?.message}
-                visible={showPassword}
-                onToggle={() => setShowPassword((value) => !value)}
-              />
-              <PasswordField
-                label="CONFIRM PASSWORD"
-                name="confirmPassword"
-                control={control}
-                error={errors.confirmPassword?.message}
-                visible={showConfirm}
-                onToggle={() => setShowConfirm((value) => !value)}
-              />
-              {formError ? (
-                <View style={styles.errorPanel}>
-                  <Text style={styles.errorPanelText}>{formError}</Text>
-                </View>
-              ) : null}
-              <Pressable
-                accessibilityRole="button"
-                disabled={isSubmitting}
-                onPress={() => void submit()}
-                style={[styles.submit, isSubmitting && styles.disabled]}
-              >
-                <Text style={styles.submitText}>
-                  {isSubmitting ? "Creating account…" : "Create account"}
-                </Text>
-              </Pressable>
-            </>
-          ) : (
+          <AuthGlassPanel blurTargetRef={blurTargetRef} style={styles.panel}>
             <Pressable
               accessibilityRole="button"
-              onPress={() => router.replace("/login")}
-              style={styles.submit}
+              accessibilityLabel="Back"
+              onPress={() => router.back()}
+              style={styles.back}
             >
-              <Text style={styles.submitText}>Continue to sign in</Text>
+              <ArrowLeft
+                color={mode === "light" ? "#1D2A3A" : colors.muted}
+                size={19}
+              />
             </Pressable>
-          )}
-          <View style={styles.footerRow}>
-            <Text style={styles.footer}>
-              {complete ? "Already verified? " : "Already have an account? "}
-            </Text>
-            <Link href="/login" style={styles.login}>
-              Sign in
-            </Link>
-          </View>
+            <Text style={styles.title}>Create your account.</Text>
+            <Field
+              label="FULL NAME"
+              name="fullName"
+              control={control}
+              error={errors.fullName?.message}
+              placeholder="Your name"
+              autoCapitalize="words"
+            />
+            <Field
+              label="EMAIL"
+              name="email"
+              control={control}
+              error={errors.email?.message}
+              placeholder="you@example.com"
+              keyboardType="email-address"
+              autoCapitalize="none"
+            />
+            <PasswordField
+              label="PASSWORD"
+              name="password"
+              control={control}
+              error={errors.password?.message}
+              visible={showPassword}
+              onToggle={() => setShowPassword((value) => !value)}
+            />
+            <PasswordField
+              label="CONFIRM PASSWORD"
+              name="confirmPassword"
+              control={control}
+              error={errors.confirmPassword?.message}
+              visible={showConfirm}
+              onToggle={() => setShowConfirm((value) => !value)}
+            />
+            {formError ? (
+              <View style={styles.errorPanel}>
+                <Text style={styles.errorPanelText}>{formError}</Text>
+              </View>
+            ) : null}
+            <Pressable
+              accessibilityRole="button"
+              disabled={isSubmitting}
+              onPress={() => void submit()}
+              style={[styles.submit, isSubmitting && styles.disabled]}
+            >
+              <Text
+                style={[
+                  styles.submitText,
+                  mode === "light" && styles.lightButtonText,
+                ]}
+              >
+                {isSubmitting ? "Creating account…" : "Create account"}
+              </Text>
+            </Pressable>
+            <View style={styles.footerRow}>
+              <Text
+                style={[
+                  styles.footer,
+                  mode === "light" && styles.lightMutedText,
+                ]}
+              >
+                Already have an account?{" "}
+              </Text>
+              <Link
+                href="/login"
+                style={[styles.login, mode === "light" && styles.lightLinkText]}
+              >
+                Sign in
+              </Link>
+            </View>
+          </AuthGlassPanel>
         </ScrollView>
       </KeyboardAvoidingView>
     </SafeAreaView>
@@ -218,9 +200,15 @@ function Field({
   autoCapitalize?: "none" | "sentences" | "words" | "characters";
   keyboardType?: "default" | "email-address";
 }) {
+  const { mode } = useAppTheme();
+
   return (
     <View style={styles.fieldGroup}>
-      <Text style={styles.label}>{label}</Text>
+      <Text
+        style={[styles.label, mode === "light" && styles.lightMutedText]}
+      >
+        {label}
+      </Text>
       <Controller
         control={control}
         name={name}
@@ -256,9 +244,15 @@ function PasswordField({
   visible: boolean;
   onToggle: () => void;
 }) {
+  const { mode } = useAppTheme();
+
   return (
     <View style={styles.fieldGroup}>
-      <Text style={styles.label}>{label}</Text>
+      <Text
+        style={[styles.label, mode === "light" && styles.lightMutedText]}
+      >
+        {label}
+      </Text>
       <View style={[styles.passwordWrap, error && styles.inputError]}>
         <Controller
           control={control}
@@ -284,9 +278,15 @@ function PasswordField({
           style={styles.eye}
         >
           {visible ? (
-            <EyeOff color={colors.muted} size={18} />
+            <EyeOff
+              color={mode === "light" ? "#1D2A3A" : colors.muted}
+              size={18}
+            />
           ) : (
-            <Eye color={colors.muted} size={18} />
+            <Eye
+              color={mode === "light" ? "#1D2A3A" : colors.muted}
+              size={18}
+            />
           )}
         </Pressable>
       </View>
@@ -296,7 +296,11 @@ function PasswordField({
 }
 
 const styles = createThemedStyles({
-  safe: { flex: 1, backgroundColor: colors.background },
+  safe: {
+    flex: 1,
+    position: "relative",
+    backgroundColor: "transparent",
+  },
   page: {
     flexGrow: 1,
     width: "100%",
@@ -306,6 +310,7 @@ const styles = createThemedStyles({
     paddingTop: spacing.md,
     justifyContent: "center",
   },
+  panel: { padding: spacing.xl },
   back: {
     width: 42,
     height: 42,
@@ -313,44 +318,11 @@ const styles = createThemedStyles({
     justifyContent: "center",
     marginBottom: spacing.lg,
   },
-  brand: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 9,
-    marginBottom: spacing.xl,
-  },
-  brandIcon: {
-    width: 30,
-    height: 30,
-    borderRadius: 8,
-    backgroundColor: colors.accent,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  brandText: {
-    color: colors.text,
-    fontSize: 12,
-    fontWeight: "900",
-    letterSpacing: 1.2,
-  },
-  kicker: {
-    color: colors.accent,
-    fontSize: 10,
-    fontWeight: "900",
-    letterSpacing: 1.2,
-    marginBottom: spacing.sm,
-  },
   title: {
     color: colors.text,
     fontSize: 29,
     fontWeight: "900",
     marginBottom: spacing.sm,
-  },
-  subtitle: {
-    color: colors.muted,
-    fontSize: 14,
-    lineHeight: 21,
-    marginBottom: spacing.lg,
   },
   fieldGroup: { marginBottom: spacing.md },
   label: {
@@ -360,6 +332,8 @@ const styles = createThemedStyles({
     letterSpacing: 0.9,
     marginBottom: 8,
   },
+  lightMutedText: { color: "#1D2A3A" },
+  lightLinkText: { color: "#0C416B" },
   input: {
     height: 48,
     borderWidth: 1,
@@ -410,6 +384,7 @@ const styles = createThemedStyles({
     marginTop: spacing.sm,
   },
   submitText: { color: colors.background, fontWeight: "900", fontSize: 14 },
+  lightButtonText: { color: colors.text },
   disabled: { opacity: 0.55 },
   footerRow: {
     flexDirection: "row",

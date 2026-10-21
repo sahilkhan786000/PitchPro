@@ -89,64 +89,16 @@ export async function listTournaments(
   }));
 }
 
-export async function listNotifications() {
-  const client = requireSupabase();
-  const { data, error } = await client
-    .from("notifications")
-    .select(
-      "id, tournament_id, event_type, title, body, entity_type, entity_id, read_at, created_at, tournaments(name)",
-    )
-    .order("created_at", { ascending: false })
-    .limit(100);
-  if (error) throw error;
-  return data ?? [];
-}
-
-export async function countUnreadNotifications() {
-  const client = requireSupabase();
-  const { count, error } = await client
-    .from("notifications")
-    .select("id", { count: "exact", head: true })
-    .is("read_at", null);
-  if (error) throw error;
-  return count ?? 0;
-}
-
-export async function markNotificationsRead(notificationId?: string) {
-  const client = requireSupabase();
-  const { data, error } = await client.rpc("mark_notifications_read", {
-    p_notification_id: notificationId ?? null,
-  });
-  if (error) throw error;
-  return data as number;
-}
-
-export function subscribeToNotifications(userId: string, onUpdate: () => void) {
-  const client = requireSupabase();
-  const subscriptionId = `${Date.now()}:${Math.random().toString(36).slice(2)}`;
-  const channel = client
-    .channel(`notifications:${userId}:${subscriptionId}`)
-    .on(
-      "postgres_changes",
-      {
-        event: "INSERT",
-        schema: "public",
-        table: "notifications",
-        filter: `recipient_id=eq.${userId}`,
-      },
-      onUpdate,
-    )
-    .subscribe();
-  return () => {
-    void client.removeChannel(channel);
-  };
-}
-
-export async function listTeams(ownerId?: string): Promise<TeamRecord[]> {
+export async function listTeams(
+  clubId: string,
+  ownerId?: string,
+): Promise<TeamRecord[]> {
+  if (!clubId) return [];
   const client = requireSupabase();
   let query = client
     .from("teams")
     .select("id, name, logo_path, created_at, owner_id")
+    .eq("club_id", clubId)
     .order("name", { ascending: true });
   if (ownerId) query = query.eq("owner_id", ownerId);
   const { data, error } = await query;
@@ -167,16 +119,27 @@ export async function getSignedLogoUrl(
 }
 
 export async function createTeam(
+  clubId: string,
   name: string,
   logoPath: string | null,
 ): Promise<TeamRecord> {
+  if (!clubId) throw new Error("Join a Club before creating a team.");
   const client = requireSupabase();
   const { data, error } = await client.rpc("create_team", {
+    p_club_id: clubId,
     p_name: name.trim(),
     p_logo_path: logoPath,
   });
   if (error) throw error;
   return data as TeamRecord;
+}
+
+export async function deleteTeam(teamId: string) {
+  const client = requireSupabase();
+  const { error } = await client.rpc("delete_team", {
+    p_team_id: teamId,
+  });
+  if (error) throw error;
 }
 
 export async function createTournament(input: {

@@ -41,7 +41,7 @@ The Database Webhook authenticates to the Edge Function with the service-role be
 
 ## Operational Checklist
 
-- Enable email confirmation and configure the exact `pitchpro://` redirect URLs in Supabase Auth.
+- Disable email confirmation in Supabase Auth so new accounts sign in immediately; configure the exact `pitchpro://` password-reset redirect URLs.
 - Review RLS policies whenever adding a table or RPC.
 - Keep EAS, Supabase, Firebase, and Apple credentials in their respective secret stores.
 - Rotate a leaked key immediately and revoke affected invitation links.

@@ -33,8 +33,7 @@ interface AuthContextValue {
     fullName: string,
     email: string,
     password: string,
-    emailRedirectTo?: string,
-  ) => Promise<boolean>;
+  ) => Promise<void>;
   signOut: () => Promise<void>;
   createClub: (name: string, pin: string) => Promise<ClubProfile>;
   joinClub: (name: string, pin: string) => Promise<ClubProfile>;
@@ -252,6 +251,11 @@ export function AuthProvider({ children }: PropsWithChildren) {
       p_name: trimmedName,
       p_pin: pin.trim(),
     });
+    if (error?.code === "23505") {
+      throw new Error(
+        "A Club with this name already exists. Try another name or join it with its PIN.",
+      );
+    }
     if (error) throw error;
 
     const newClub = parseClubResponse(data, pin.trim());
@@ -358,7 +362,7 @@ export function AuthProvider({ children }: PropsWithChildren) {
       });
       if (error) throw error;
     },
-    signUp: async (fullName, email, password, emailRedirectTo) => {
+    signUp: async (fullName, email, password) => {
       if (!supabase)
         throw new Error("Configure Supabase before creating an account.");
       const { data, error } = await supabase.auth.signUp({
@@ -366,12 +370,15 @@ export function AuthProvider({ children }: PropsWithChildren) {
         password,
         options: {
           data: { full_name: fullName.trim() },
-          ...(emailRedirectTo ? { emailRedirectTo } : {}),
         },
       });
       if (error) throw error;
-      if (data.session) setSession(data.session);
-      return Boolean(data.session);
+      if (!data.session) {
+        throw new Error(
+          "Email confirmation is enabled in Supabase. Disable it to sign in immediately after creating an account.",
+        );
+      }
+      setSession(data.session);
     },
     signOut: async () => {
       if (!supabase) return;

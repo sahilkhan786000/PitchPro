@@ -2,13 +2,19 @@
 
 ## Migration
 
-The initial normalized schema is `supabase/migrations/202610170001_initial_schema.sql`. Apply it with `npx supabase db push` after linking a project. Do not hand-edit a production database; make schema changes in a new migration.
+The migration history has been replaced with a clean Club-scoped baseline:
+
+- `supabase/migrations/202610210001_club_hierarchy_baseline.sql` creates the application schema.
+- `supabase/migrations/202610210002_club_scoped_access.sql` enforces Club-first data access.
+- `supabase/migrations/202610210003_club_scoped_notifications.sql` scopes notification reads and read-state changes to the active Club.
+
+Because the previous migration files were removed, an already-migrated test database must be reset before applying this baseline. `npx supabase db reset --linked` is destructive: it drops the linked database's application data and rebuilds it from the current migrations. Use it only for the disposable test project. Do not reset a production project.
 
 ## Tables
 
 - `profiles`: auth-linked display names and avatars; created from the Auth user trigger.
-- `teams`: globally owned team records and private logo paths; deletion is restricted when referenced by tournament participation or fixtures.
-- `tournaments`: owner, dates, timezone, status, and supported competition format.
+- `teams`: Club-scoped, creator-owned records and private logo paths; Club members can view them, while creators manage/delete their own teams. Deletion is restricted when referenced by tournament participation or fixtures.
+- `tournaments`: Club-scoped, owner-managed records with dates, timezone, status, and supported competition format.
 - `tournament_members`: owner/read-only roles; the owner membership is inserted automatically.
 - `tournament_teams`: unique tournament/team participants, frozen after fixture creation.
 - `matchdays`: unique numbered rounds per tournament.
@@ -18,6 +24,8 @@ The initial normalized schema is `supabase/migrations/202610170001_initial_schem
 - `notifications`: recipient-specific in-app events with read timestamps.
 - `tournament_invitations`: one-use SHA-256 token hashes, expiry, acceptance, and revocation.
 - `notification_preferences`, `push_devices`, `push_deliveries`: opt-in settings, per-device Expo tokens, and idempotent server-side delivery records.
+
+Club membership is the first authorization boundary: records from another Club are not visible, including to administrators who are not members of that Club. Within a Club, its members can view Club tournaments and teams; creators retain owner-only management actions. Teams can only be added to tournaments in their own Club. Tournament invitations do not grant access across Club boundaries. Notifications and notification read-state changes are also scoped to the active Club.
 
 Foreign keys and unique indexes preserve historical fixture references. Team deletion is restricted when history references that team. Tournament deletion cascades its tournament-owned rows.
 
@@ -29,7 +37,7 @@ Standings include only played `league` fixtures. Ranking order is points, goal d
 
 ## Trusted RPCs
 
-- `create_team`: assigns `owner_id` from `auth.uid()` and validates logo path ownership.
+- `create_team`: requires Club membership, assigns `owner_id` from `auth.uid()`, and validates logo path ownership.
 - `create_tournament_with_teams`: atomically creates tournament, owner membership, participants, and activity.
 - `generate_league_fixtures`: validates and atomically persists matchdays/fixtures; rejects regeneration.
 - `save_fixture_result`: locks a fixture, checks expected version and owner role, validates scores/goals, writes activity and notification rows, and updates tournament lifecycle for finals.

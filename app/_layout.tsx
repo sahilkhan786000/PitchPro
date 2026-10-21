@@ -66,13 +66,9 @@ function RootLayoutNav() {
   const { session } = useAuth();
   const { mode } = useAppTheme();
   const pathname = usePathname();
-  const authPaths = [
-    "/login",
-    "/signup",
-    "/forgot-password",
-    "/reset-password",
-  ];
-  const showBrand = Boolean(session) && !authPaths.includes(pathname);
+  const showBrand =
+    !["/forgot-password", "/reset-password"].includes(pathname) &&
+    (Boolean(session) || ["/", "/login", "/signup"].includes(pathname));
 
   return (
     <ThemeProvider value={mode === "dark" ? DarkTheme : DefaultTheme}>
@@ -80,7 +76,12 @@ function RootLayoutNav() {
         edges={["top"]}
         style={{ flex: 1, backgroundColor: colors.background }}
       >
-        <AppPageHeader showBrand={showBrand} />
+        <AppPageHeader
+          showBrand={showBrand}
+          centered={
+            !session && ["/", "/login", "/signup"].includes(pathname)
+          }
+        />
         <Stack screenOptions={{ headerShown: false }}>
           <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
           <Stack.Screen name="login" options={{ headerShown: false }} />
