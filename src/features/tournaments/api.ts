@@ -210,15 +210,40 @@ export async function deleteTournamentFixture(fixtureId: string) {
 }
 
 export async function getTournament(id: string) {
+  if (!id) throw new Error("Tournament ID is required.");
   const client = requireSupabase();
-  const [tournamentResult, teamResult, fixtureResult] = await Promise.all([
-    client
+
+  // 1. Fetch tournament details (with fallback for optional columns)
+  let tournamentData: any = null;
+  const tournamentQuery = await client
+    .from("tournaments")
+    .select(
+      "id, name, description, status, owner_id, created_at, start_date, end_date, timezone",
+    )
+    .eq("id", id)
+    .maybeSingle();
+
+  if (tournamentQuery.error) {
+    const basicQuery = await client
       .from("tournaments")
-      .select(
-        "id, name, description, status, owner_id, created_at, start_date, end_date, timezone",
-      )
+      .select("id, name, description, status, owner_id, created_at")
       .eq("id", id)
-      .single(),
+      .maybeSingle();
+    if (basicQuery.error) throw basicQuery.error;
+    if (!basicQuery.data) throw new Error("Tournament not found.");
+    tournamentData = {
+      ...basicQuery.data,
+      start_date: null,
+      end_date: null,
+      timezone: "UTC",
+    };
+  } else {
+    if (!tournamentQuery.data) throw new Error("Tournament not found.");
+    tournamentData = tournamentQuery.data;
+  }
+
+  // 2. Fetch teams and fixtures concurrently
+  const [teamResult, fixtureResult] = await Promise.all([
     client
       .from("tournament_teams")
       .select("team_id, teams(id, name, logo_path)")
@@ -230,33 +255,86 @@ export async function getTournament(id: string) {
       )
       .eq("tournament_id", id),
   ]);
-  if (tournamentResult.error) throw tournamentResult.error;
-  if (teamResult.error) throw teamResult.error;
-  if (fixtureResult.error) throw fixtureResult.error;
-  const fixtureRows = fixtureResult.data ?? [];
+
+  // Process teams with fallback
+  let teamsList: Array<{ id: string; name: string; logo_path: string | null }> = [];
+  if (teamResult.error) {
+    const ttFallback = await client
+      .from("tournament_teams")
+      .select("team_id")
+      .eq("tournament_id", id);
+    if (!ttFallback.error && ttFallback.data?.length) {
+      const teamIds = ttFallback.data.map((row) => row.team_id);
+      const teamsFallback = await client
+        .from("teams")
+        .select("id, name, logo_path")
+        .in("id", teamIds);
+      if (!teamsFallback.error && teamsFallback.data) {
+        teamsList = teamsFallback.data;
+      }
+    }
+  } else if (teamResult.data) {
+    const members = teamResult.data as unknown as Array<{
+      team_id: string;
+      teams: { id: string; name: string; logo_path: string | null } | null;
+    }>;
+    teamsList = members.flatMap((member) => (member.teams ? [member.teams] : []));
+  }
+
+  // Deduplicate teams by ID to ensure calculateStandings never encounters duplicates
+  const teamMap = new Map<string, { id: string; name: string; logo_path: string | null }>();
+  for (const team of teamsList) {
+    if (team?.id && !teamMap.has(team.id)) {
+      teamMap.set(team.id, team);
+    }
+  }
+  const deduplicatedTeams = Array.from(teamMap.values());
+
+  // Process fixtures with fallback for matchdays relation
+  let fixtureRows: any[] = [];
+  if (fixtureResult.error) {
+    const fallbackFixtures = await client
+      .from("fixtures")
+      .select(
+        "id, tournament_id, matchday_id, home_team_id, away_team_id, stage, status, scheduled_at, played_at, home_score, away_score, notes, notes_image_path, version, updated_at",
+      )
+      .eq("tournament_id", id);
+    if (!fallbackFixtures.error && fallbackFixtures.data) {
+      fixtureRows = fallbackFixtures.data.map((fixture: any) => ({
+        ...fixture,
+        matchdays: null,
+      }));
+    }
+  } else if (fixtureResult.data) {
+    fixtureRows = fixtureResult.data;
+  }
+
+  // 3. Fetch goal events if there are fixtures
   const fixtureIds = fixtureRows.map((fixture) => fixture.id);
-  const goalsResult = fixtureIds.length
-    ? await client
+  const goalsByFixture = new Map<string, TournamentGoalEvent[]>();
+  if (fixtureIds.length) {
+    try {
+      const goalsResult = await client
         .from("goal_events")
         .select("id, fixture_id, team_id, scorer_name, minute, goal_type")
-        .in("fixture_id", fixtureIds)
-    : { data: [], error: null };
-  if (goalsResult.error) throw goalsResult.error;
-  const goalsByFixture = new Map<string, TournamentGoalEvent[]>();
-  for (const event of (goalsResult.data ?? []) as Array<
-    TournamentGoalEvent & { fixture_id: string }
-  >) {
-    const events = goalsByFixture.get(event.fixture_id) ?? [];
-    events.push(event);
-    goalsByFixture.set(event.fixture_id, events);
+        .in("fixture_id", fixtureIds);
+      if (!goalsResult.error && goalsResult.data) {
+        for (const event of goalsResult.data as Array<
+          TournamentGoalEvent & { fixture_id: string }
+        >) {
+          const events = goalsByFixture.get(event.fixture_id) ?? [];
+          events.push(event);
+          goalsByFixture.set(event.fixture_id, events);
+        }
+      }
+    } catch {
+      // Gracefully continue without goal events if query fails
+    }
   }
-  const members = (teamResult.data ?? []) as unknown as Array<{
-    team_id: string;
-    teams: { id: string; name: string; logo_path: string | null } | null;
-  }>;
+
   return {
-    tournament: tournamentResult.data,
-    teams: members.flatMap((member) => (member.teams ? [member.teams] : [])),
+    tournament: tournamentData,
+    teams: deduplicatedTeams,
     fixtures: fixtureRows.map((fixture) => ({
       ...fixture,
       goal_events: goalsByFixture.get(fixture.id) ?? [],

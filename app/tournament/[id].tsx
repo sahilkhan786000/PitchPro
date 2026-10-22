@@ -112,8 +112,13 @@ export default function TournamentScreen() {
 }
 
 function TournamentContent() {
-  const params = useLocalSearchParams<{ id: string; fixtureId?: string }>();
-  const tournamentId = typeof params.id === "string" ? params.id : "";
+  const params = useLocalSearchParams<{ id: string | string[]; fixtureId?: string }>();
+  const tournamentId = useMemo(() => {
+    const raw = params.id;
+    if (Array.isArray(raw)) return raw[0] ?? "";
+    if (typeof raw === "string") return raw;
+    return "";
+  }, [params.id]);
   const fixtureId =
     typeof params.fixtureId === "string" ? params.fixtureId : "";
   const { session } = useAuth();
@@ -473,7 +478,7 @@ function TournamentContent() {
     }
   };
 
-  if (query.isLoading)
+  if (query.isPending || (!data && !query.isError))
     return (
       <SafeAreaView style={styles.center} edges={["left", "right", "bottom"]}>
         <ActivityIndicator color={colors.accent} />
@@ -485,6 +490,11 @@ function TournamentContent() {
       <SafeAreaView style={styles.center} edges={["left", "right", "bottom"]}>
         <CircleAlert color={colors.danger} size={22} />
         <Text style={styles.muted}>Couldn’t load this tournament.</Text>
+        {query.error?.message ? (
+          <Text style={[styles.error, { textAlign: "center", marginHorizontal: spacing.xl, marginTop: 8 }]}>
+            {query.error.message}
+          </Text>
+        ) : null}
         <Pressable onPress={() => query.refetch()}>
           <Text style={styles.retry}>Retry</Text>
         </Pressable>

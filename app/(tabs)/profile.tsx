@@ -3,12 +3,12 @@ import { router } from "expo-router";
 import {
   ChevronRight,
   LogOut,
-  Plus,
   ShieldCheck,
   UserRound,
 } from "lucide-react-native";
 import {
   ActivityIndicator,
+  Alert,
   Pressable,
   ScrollView,
   Text,
@@ -32,7 +32,7 @@ export default function ProfileScreen() {
 }
 
 function ProfileContent() {
-  const { session, signOut, clearClub } = useAuth();
+  const { session, signOut, clearClub, club } = useAuth();
   const client = useQueryClient();
   const profileQuery = useQuery({
     queryKey: ["profile", session?.user.id],
@@ -55,7 +55,7 @@ function ProfileContent() {
       router.replace("/login");
     },
   });
-  const openClubSetup = useMutation({
+  const leaveClub = useMutation({
     mutationFn: async () => {
       await clearClub();
       router.replace("/(tabs)");
@@ -72,16 +72,35 @@ function ProfileContent() {
       <ScrollView contentContainerStyle={styles.page}>
         <View style={styles.titleRow}>
           <Text style={styles.title}>Profile</Text>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="Create or join a club"
-            disabled={openClubSetup.isPending}
-            onPress={() => openClubSetup.mutate()}
-            style={styles.addClub}
-          >
-            <Plus color={colors.background} size={20} />
-          </Pressable>
+          {club ? (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Leave Club"
+              disabled={leaveClub.isPending}
+              onPress={() => {
+                Alert.alert(
+                  "Leave Club",
+                  `Are you sure you want to leave ${club.name}?`,
+                  [
+                    { text: "Cancel", style: "cancel" },
+                    {
+                      text: "Leave Club",
+                      style: "destructive",
+                      onPress: () => leaveClub.mutate(),
+                    },
+                  ],
+                );
+              }}
+              style={styles.leaveClubButton}
+            >
+              <LogOut color={colors.danger} size={15} />
+              <Text style={styles.leaveClubText}>
+                {leaveClub.isPending ? "Leaving…" : "Leave Club"}
+              </Text>
+            </Pressable>
+          ) : null}
         </View>
+
         <View style={styles.identity}>
           <View style={styles.avatar}>
             <Text style={styles.avatarText}>
@@ -93,6 +112,19 @@ function ProfileContent() {
             <Text style={styles.email}>{email}</Text>
           </View>
         </View>
+
+        {club ? (
+          <View style={styles.clubBanner}>
+            <View style={styles.clubBannerIcon}>
+              <ShieldCheck color={colors.accent} size={18} />
+            </View>
+            <View style={styles.clubBannerCopy}>
+              <Text style={styles.clubBannerLabel}>ACTIVE CLUB</Text>
+              <Text style={styles.clubBannerName}>{club.name}</Text>
+            </View>
+          </View>
+        ) : null}
+
         {profileQuery.isLoading ? (
           <ActivityIndicator
             color={colors.accent}
@@ -102,8 +134,8 @@ function ProfileContent() {
         {profileQuery.isError ? (
           <Text style={styles.errorText}>Couldn’t load profile details.</Text>
         ) : null}
-        {openClubSetup.error ? (
-          <Text style={styles.errorText}>{openClubSetup.error.message}</Text>
+        {leaveClub.error ? (
+          <Text style={styles.errorText}>{leaveClub.error.message}</Text>
         ) : null}
         <Text style={styles.sectionLabel}>ACCOUNT</Text>
         <View style={styles.infoRow}>
@@ -168,13 +200,21 @@ const styles = createThemedStyles({
     justifyContent: "space-between",
     marginBottom: spacing.xl,
   },
-  addClub: {
-    width: 42,
-    height: 42,
-    borderRadius: radii.sm,
-    backgroundColor: colors.accent,
+  leaveClubButton: {
+    minHeight: 38,
+    flexDirection: "row",
     alignItems: "center",
-    justifyContent: "center",
+    gap: 7,
+    paddingHorizontal: spacing.md,
+    backgroundColor: "#281E21",
+    borderWidth: 1,
+    borderColor: "#57373A",
+    borderRadius: radii.sm,
+  },
+  leaveClubText: {
+    color: colors.danger,
+    fontSize: 12,
+    fontWeight: "800",
   },
   identity: {
     flexDirection: "row",
@@ -185,7 +225,39 @@ const styles = createThemedStyles({
     borderColor: colors.border,
     padding: spacing.lg,
     borderRadius: radii.md,
+    marginBottom: spacing.md,
+  },
+  clubBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.md,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
+    padding: spacing.md,
+    borderRadius: radii.md,
     marginBottom: spacing.xl,
+  },
+  clubBannerIcon: {
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    backgroundColor: colors.elevated,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  clubBannerCopy: { flex: 1 },
+  clubBannerLabel: {
+    color: colors.accent,
+    fontSize: 9,
+    fontWeight: "900",
+    letterSpacing: 0.8,
+  },
+  clubBannerName: {
+    color: colors.text,
+    fontSize: 14,
+    fontWeight: "800",
+    marginTop: 2,
   },
   avatar: {
     width: 54,

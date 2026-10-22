@@ -48,11 +48,11 @@ export function ClubMatchdayFooter() {
     transform: [
       {
         translateX: reduceMotion
-          ? Math.max(0, pitchWidth * 0.44)
+          ? Math.max(0, pitchWidth * 0.42)
           : interpolate(
               progress.value,
               [0, 1],
-              [0, Math.max(0, pitchWidth * 0.44)],
+              [0, Math.max(0, pitchWidth * 0.42)],
             ),
       },
       { rotate: `${progress.value * 720}deg` },
@@ -62,7 +62,7 @@ export function ClubMatchdayFooter() {
           : interpolate(
               Math.sin(progress.value * Math.PI * 8),
               [-1, 1],
-              [0, -5],
+              [0, -3],
             ),
       },
     ],
@@ -128,16 +128,16 @@ export function ClubMatchdayFooter() {
           <Circle
             cx="50%"
             cy="48%"
-            r="10"
+            r="8"
             fill="none"
             stroke={`${palette.accent}70`}
             strokeWidth="1"
           />
           <Rect
             x="91%"
-            y="32%"
+            y="28%"
             width="8%"
-            height="34%"
+            height="42%"
             fill="none"
             stroke={`${palette.accent}70`}
             strokeWidth="1"
@@ -160,11 +160,10 @@ export function ClubMatchdayFooter() {
 
 const styles = StyleSheet.create({
   card: {
-    minHeight: 146,
-    marginTop: spacing.lg,
+    minHeight: 68,
+    marginTop: 10,
     paddingHorizontal: spacing.md,
-    paddingTop: spacing.sm + 10,
-    paddingBottom: spacing.sm,
+    paddingVertical: 7,
     borderRadius: radii.md,
     borderWidth: 1,
     overflow: "hidden",
@@ -173,14 +172,14 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     gap: spacing.sm,
   },
-  copy: { flex: 1, gap: 5 },
-  eyebrow: { fontSize: 8, fontWeight: "900", letterSpacing: 1 },
-  title: { fontSize: 12, fontWeight: "800" },
+  copy: { flex: 1, gap: 3 },
+  eyebrow: { fontSize: 8, fontWeight: "900", letterSpacing: 0.8 },
+  title: { fontSize: 11, fontWeight: "800" },
   pitch: {
-    width: 132,
-    height: 124,
+    width: 96,
+    height: 54,
     borderWidth: 1,
-    borderRadius: 8,
+    borderRadius: 7,
     overflow: "hidden",
     position: "relative",
   },
@@ -188,20 +187,20 @@ const styles = StyleSheet.create({
   goalGlow: {
     position: "absolute",
     right: 1,
-    top: "32%",
-    width: 5,
-    height: "34%",
-    borderRadius: 3,
+    top: "28%",
+    width: 4,
+    height: "42%",
+    borderRadius: 2,
     backgroundColor: "#F6C85F",
   },
   ball: {
     position: "absolute",
     left: "50%",
-    marginLeft: -12,
+    marginLeft: -9,
     top: "50%",
-    marginTop: -12,
-    width: 24,
-    height: 24,
+    marginTop: -9,
+    width: 18,
+    height: 18,
     alignItems: "center",
     justifyContent: "center",
   },

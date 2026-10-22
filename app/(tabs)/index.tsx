@@ -346,13 +346,13 @@ function ClubSetupScreen({
     <SafeAreaView style={styles.safe} edges={["left", "right", "bottom"]}>
       <StatusBar style={themeMode === "dark" ? "light" : "dark"} />
       <ScrollView
-        contentContainerStyle={styles.content}
+        contentContainerStyle={styles.setupContent}
         keyboardShouldPersistTaps="handled"
       >
-        <View style={styles.greetingRow}>
+        <View style={styles.setupGreetingRow}>
           <View style={styles.greetingCopy}>
-            <Text style={styles.overline}>WELCOME IN</Text>
-            <Text style={styles.greeting}>Pick your Club to start.</Text>
+            <Text style={styles.setupOverline}>WELCOME IN</Text>
+            <Text style={styles.setupGreeting}>Pick your Club to start.</Text>
           </View>
         </View>
 
@@ -366,14 +366,14 @@ function ClubSetupScreen({
           }
           start={{ x: 0, y: 0 }}
           end={{ x: 1, y: 1 }}
-          style={styles.hero}
+          style={styles.setupHero}
         >
           <View style={styles.heroText}>
-            <Text style={styles.heroLabel}>FIRST THINGS FIRST</Text>
-            <Text style={styles.heroTitle}>
+            <Text style={styles.setupHeroLabel}>FIRST THINGS FIRST</Text>
+            <Text style={styles.setupHeroTitle}>
               Create a Club or join an existing one.
             </Text>
-            <Text style={styles.heroBody}>
+            <Text style={styles.setupHeroBody}>
               Set the club name and a 6-digit PIN so your group can share
               tournaments and teams.
             </Text>
@@ -382,24 +382,23 @@ function ClubSetupScreen({
 
         {!mode ? (
           <>
-            <View style={styles.clubActions}>
+            <View style={styles.setupClubActions}>
               <Pressable
                 accessibilityRole="button"
                 onPress={() => setMode("create")}
-                style={[styles.heroButton, styles.clubActionButton]}
+                style={[styles.setupHeroButton, styles.clubActionButton]}
               >
-                <Plus color={colors.background} size={18} />
+                <Plus color={colors.background} size={16} />
                 <Text style={styles.heroButtonText}>Create Club</Text>
               </Pressable>
               <Pressable
                 accessibilityRole="button"
                 onPress={() => setMode("join")}
-                style={[styles.secondaryAction, styles.clubActionButton]}
+                style={[styles.setupSecondaryAction, styles.clubActionButton]}
               >
                 <Text style={styles.secondaryActionText}>Join with PIN</Text>
               </Pressable>
             </View>
-            <View style={styles.clubFooterSpacer} />
             <ClubMatchdayFooter />
           </>
         ) : (
@@ -562,7 +561,76 @@ const styles = createThemedStyles({
     width: "100%",
     alignSelf: "center",
   },
-  clubFooterSpacer: { height: 90 },
+  setupContent: {
+    paddingHorizontal: spacing.lg,
+    paddingBottom: spacing.sm,
+    maxWidth: 760,
+    width: "100%",
+    alignSelf: "center",
+  },
+  setupGreetingRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: spacing.xs,
+  },
+  setupOverline: {
+    color: colors.accent,
+    fontSize: 9,
+    fontWeight: "900",
+    letterSpacing: 1,
+    marginBottom: 2,
+  },
+  setupGreeting: { color: colors.text, fontSize: 18, fontWeight: "900" },
+  setupHero: {
+    position: "relative",
+    borderRadius: radii.md,
+    borderWidth: 1,
+    borderColor: colors.accent,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    overflow: "hidden",
+  },
+  setupHeroLabel: {
+    color: colors.accent,
+    fontSize: 9,
+    fontWeight: "900",
+    letterSpacing: 0.9,
+    marginBottom: 2,
+  },
+  setupHeroTitle: {
+    color: colors.text,
+    fontSize: 15,
+    lineHeight: 19,
+    fontWeight: "900",
+    marginBottom: 2,
+  },
+  setupHeroBody: { color: colors.muted, fontSize: 11, lineHeight: 15 },
+  setupClubActions: {
+    marginTop: spacing.sm,
+    gap: 7,
+  },
+  setupHeroButton: {
+    alignSelf: "flex-start",
+    minHeight: 38,
+    paddingHorizontal: spacing.md,
+    gap: 7,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: colors.accent,
+    borderRadius: radii.sm,
+  },
+  setupSecondaryAction: {
+    minHeight: 38,
+    paddingHorizontal: spacing.md,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radii.sm,
+  },
   greetingRow: {
     flexDirection: "row",
     alignItems: "center",
