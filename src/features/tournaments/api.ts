@@ -189,6 +189,26 @@ export async function deleteTournament(tournamentId: string) {
   if (error) throw error;
 }
 
+export async function addTournamentTeams(
+  tournamentId: string,
+  teamIds: string[],
+) {
+  if (!tournamentId || !teamIds.length) return;
+  const client = requireSupabase();
+  const rows = teamIds.map((team_id) => ({
+    tournament_id: tournamentId,
+    team_id,
+  }));
+  const { error } = await client.from("tournament_teams").insert(rows);
+  if (error) {
+    const rpcResult = await client.rpc("add_tournament_teams", {
+      p_tournament_id: tournamentId,
+      p_team_ids: teamIds,
+    });
+    if (rpcResult.error) throw error;
+  }
+}
+
 export async function removeTournamentTeam(
   tournamentId: string,
   teamId: string,
@@ -213,17 +233,15 @@ export async function getTournament(id: string) {
   if (!id) throw new Error("Tournament ID is required.");
   const client = requireSupabase();
 
-  // 1. Fetch tournament details (with fallback for optional columns)
+  // 1. Fetch tournament details
   let tournamentData: any = null;
   const tournamentQuery = await client
     .from("tournaments")
-    .select(
-      "id, name, description, status, owner_id, created_at, start_date, end_date, timezone",
-    )
+    .select("*")
     .eq("id", id)
     .maybeSingle();
 
-  if (tournamentQuery.error) {
+  if (tournamentQuery.error || !tournamentQuery.data) {
     const basicQuery = await client
       .from("tournaments")
       .select("id, name, description, status, owner_id, created_at")
@@ -238,33 +256,30 @@ export async function getTournament(id: string) {
       timezone: "UTC",
     };
   } else {
-    if (!tournamentQuery.data) throw new Error("Tournament not found.");
     tournamentData = tournamentQuery.data;
   }
 
-  // 2. Fetch teams and fixtures concurrently
+  // 2. Fetch teams and raw fixtures concurrently
   const [teamResult, fixtureResult] = await Promise.all([
     client
       .from("tournament_teams")
-      .select("team_id, teams(id, name, logo_path)")
+      .select("team_id, teams(*)")
       .eq("tournament_id", id),
     client
       .from("fixtures")
-      .select(
-        "id, tournament_id, matchday_id, home_team_id, away_team_id, stage, status, scheduled_at, played_at, home_score, away_score, notes, notes_image_path, version, updated_at, matchdays(round_number)",
-      )
+      .select("*")
       .eq("tournament_id", id),
   ]);
 
   // Process teams with fallback
   let teamsList: Array<{ id: string; name: string; logo_path: string | null }> = [];
-  if (teamResult.error) {
+  if (teamResult.error || !teamResult.data) {
     const ttFallback = await client
       .from("tournament_teams")
       .select("team_id")
       .eq("tournament_id", id);
     if (!ttFallback.error && ttFallback.data?.length) {
-      const teamIds = ttFallback.data.map((row) => row.team_id);
+      const teamIds = ttFallback.data.map((row: any) => row.team_id);
       const teamsFallback = await client
         .from("teams")
         .select("id, name, logo_path")
@@ -281,7 +296,7 @@ export async function getTournament(id: string) {
     teamsList = members.flatMap((member) => (member.teams ? [member.teams] : []));
   }
 
-  // Deduplicate teams by ID to ensure calculateStandings never encounters duplicates
+  // Deduplicate teams by ID
   const teamMap = new Map<string, { id: string; name: string; logo_path: string | null }>();
   for (const team of teamsList) {
     if (team?.id && !teamMap.has(team.id)) {
@@ -290,26 +305,41 @@ export async function getTournament(id: string) {
   }
   const deduplicatedTeams = Array.from(teamMap.values());
 
-  // Process fixtures with fallback for matchdays relation
+  // Process fixtures with fallback
   let fixtureRows: any[] = [];
-  if (fixtureResult.error) {
+  if (fixtureResult.error || !fixtureResult.data) {
     const fallbackFixtures = await client
       .from("fixtures")
-      .select(
-        "id, tournament_id, matchday_id, home_team_id, away_team_id, stage, status, scheduled_at, played_at, home_score, away_score, notes, notes_image_path, version, updated_at",
-      )
+      .select("id, tournament_id, home_team_id, away_team_id, stage, status, home_score, away_score")
       .eq("tournament_id", id);
-    if (!fallbackFixtures.error && fallbackFixtures.data) {
-      fixtureRows = fallbackFixtures.data.map((fixture: any) => ({
-        ...fixture,
-        matchdays: null,
-      }));
-    }
-  } else if (fixtureResult.data) {
+    fixtureRows = fallbackFixtures.data ?? [];
+  } else {
     fixtureRows = fixtureResult.data;
   }
 
-  // 3. Fetch goal events if there are fixtures
+  // 3. Resolve round numbers from matchdays table if matchday_id exists
+  const matchdayIds = fixtureRows
+    .map((f: any) => f.matchday_id)
+    .filter((mId: any): mId is string => Boolean(mId && typeof mId === "string"));
+
+  const roundByMatchday = new Map<string, number>();
+  if (matchdayIds.length) {
+    try {
+      const { data: mdRows } = await client
+        .from("matchdays")
+        .select("id, round_number")
+        .in("id", matchdayIds);
+      if (mdRows) {
+        for (const md of mdRows as Array<{ id: string; round_number: number }>) {
+          roundByMatchday.set(md.id, md.round_number);
+        }
+      }
+    } catch {
+      // ignore if matchdays table is not queryable
+    }
+  }
+
+  // 4. Fetch goal events if fixtures exist
   const fixtureIds = fixtureRows.map((fixture) => fixture.id);
   const goalsByFixture = new Map<string, TournamentGoalEvent[]>();
   if (fixtureIds.length) {
@@ -328,17 +358,44 @@ export async function getTournament(id: string) {
         }
       }
     } catch {
-      // Gracefully continue without goal events if query fails
+      // ignore
     }
   }
+
+  const matchesPerRound = Math.max(1, Math.floor(deduplicatedTeams.length / 2));
+  const mappedFixtures: TournamentFixture[] = fixtureRows.map((fixture: any, idx: number) => {
+    const roundNumber =
+      fixture.round_number ??
+      fixture.round ??
+      (fixture.matchday_id ? roundByMatchday.get(fixture.matchday_id) : undefined) ??
+      fixture.matchdays?.round_number ??
+      Math.floor(idx / matchesPerRound) + 1;
+
+    return {
+      id: String(fixture.id),
+      tournament_id: String(fixture.tournament_id),
+      matchday_id: fixture.matchday_id ?? null,
+      home_team_id: String(fixture.home_team_id),
+      away_team_id: String(fixture.away_team_id),
+      stage: (fixture.stage as "league" | "final") ?? "league",
+      status: (fixture.status as "pending" | "played") ?? "pending",
+      scheduled_at: fixture.scheduled_at ?? null,
+      played_at: fixture.played_at ?? null,
+      home_score: typeof fixture.home_score === "number" ? fixture.home_score : null,
+      away_score: typeof fixture.away_score === "number" ? fixture.away_score : null,
+      notes: fixture.notes ?? null,
+      notes_image_path: fixture.notes_image_path ?? null,
+      version: typeof fixture.version === "number" ? fixture.version : 1,
+      updated_at: fixture.updated_at ?? new Date().toISOString(),
+      matchdays: { round_number: Number(roundNumber) || 1 },
+      goal_events: goalsByFixture.get(fixture.id) ?? [],
+    };
+  });
 
   return {
     tournament: tournamentData,
     teams: deduplicatedTeams,
-    fixtures: fixtureRows.map((fixture) => ({
-      ...fixture,
-      goal_events: goalsByFixture.get(fixture.id) ?? [],
-    })) as unknown as TournamentFixture[],
+    fixtures: mappedFixtures,
   };
 }
 

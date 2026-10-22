@@ -13,7 +13,12 @@ import {
   ImagePlus,
   Medal,
   RefreshCw,
+  Lock,
+  Plus,
+  Search,
   Share2,
+  ShieldAlert,
+  ShieldCheck,
   Shield,
   Table2,
   Trash2,
@@ -57,7 +62,10 @@ import {
 import { calculateStandings } from "@/src/features/standings/calculateStandings";
 import { ShareSheet } from "@/src/features/tournaments/ShareSheet";
 import {
+  addTournamentTeams,
   createFinal,
+  listTeams,
+  type TeamRecord,
   deleteTournamentFixture,
   generateFixtures,
   getSignedMatchNoteUrl,
@@ -121,7 +129,8 @@ function TournamentContent() {
   }, [params.id]);
   const fixtureId =
     typeof params.fixtureId === "string" ? params.fixtureId : "";
-  const { session } = useAuth();
+  const { session, club } = useAuth();
+  const [addTeamsVisible, setAddTeamsVisible] = useState(false);
   const [section, setSection] = useState<Section>("overview");
   const [selectedFixture, setSelectedFixture] =
     useState<TournamentFixture | null>(null);
@@ -151,6 +160,23 @@ function TournamentContent() {
   });
   const data = query.data;
   const isOwner = data?.tournament.owner_id === session?.user.id;
+  const tournamentState: "not_started" | "active" | "completed" = useMemo(() => {
+    if (data?.tournament.status === "completed") return "completed";
+    const finalFixture = data?.fixtures.find((f) => f.stage === "final");
+    if (finalFixture?.status === "played") return "completed";
+    if (data?.fixtures && data.fixtures.length > 0) return "active";
+    return "not_started";
+  }, [data]);
+  const clubId = (data?.tournament as any)?.club_id ?? club?.id ?? "";
+  const clubTeamsQuery = useQuery({
+    queryKey: ["teams", session?.user.id, clubId],
+    queryFn: () => listTeams(clubId),
+    enabled: Boolean(clubId && isOwner),
+  });
+  const existingTeamIds = useMemo(
+    () => new Set(data?.teams.map((t) => t.id) ?? []),
+    [data?.teams],
+  );
   const canEditFixtures = Boolean(
     isOwner && data?.tournament.status !== "completed",
   );
@@ -304,6 +330,20 @@ function TournamentContent() {
     setSelectedFixture(fixture);
   }, [data, fixtureId]);
 
+  const addTeamsMutation = useMutation({
+    mutationFn: (teamIds: string[]) => addTournamentTeams(tournamentId, teamIds),
+    onSuccess: async () => {
+
+      await queryClient.refetchQueries({
+        queryKey: ["tournament", tournamentId],
+      });
+      await queryClient.refetchQueries({
+        queryKey: ["activity", tournamentId],
+      });
+      setAddTeamsVisible(false);
+    },
+  });
+
   const generateMutation = useMutation({
     mutationFn: () =>
       generateFixtures(
@@ -311,24 +351,43 @@ function TournamentContent() {
         data?.teams.map(({ id, name }) => ({ id, name })) ?? [],
       ),
     onSuccess: async () => {
-      await queryClient.invalidateQueries({
+      await queryClient.refetchQueries({
         queryKey: ["tournament", tournamentId],
       });
-      await queryClient.invalidateQueries({
+      await queryClient.refetchQueries({
+        queryKey: ["activity", tournamentId],
+      });
+      await queryClient.invalidateQueries({ queryKey: ["tournaments"] });
+      setSection("fixtures");
+    },
+  });
+  /* discard
+      ),
+
+
+
+
+
+      await queryClient.refetchQueries({
+        queryKey: ["tournament", tournamentId],
+      });
+      await queryClient.refetchQueries({
         queryKey: ["activity", tournamentId],
       });
     },
   });
+  */
   const finalMutation = useMutation({
     mutationFn: () => createFinal(tournamentId),
     onSuccess: async () => {
-      await queryClient.invalidateQueries({
+
+      await queryClient.refetchQueries({
         queryKey: ["tournament", tournamentId],
       });
-      await queryClient.invalidateQueries({
+      await queryClient.refetchQueries({
         queryKey: ["activity", tournamentId],
       });
-      setSection("fixtures");
+
     },
   });
   const resultMutation = useMutation({
@@ -406,13 +465,13 @@ function TournamentContent() {
       return { saved, cleanupError };
     },
     onSuccess: async ({ saved, cleanupError }) => {
-      await queryClient.invalidateQueries({
+      await queryClient.refetchQueries({
         queryKey: ["tournament", tournamentId],
       });
-      await queryClient.invalidateQueries({
+      await queryClient.refetchQueries({
         queryKey: ["activity", tournamentId],
       });
-      await queryClient.invalidateQueries({ queryKey: ["tournaments"] });
+      await queryClient.refetchQueries({ queryKey: ["tournaments"] });
       if (cleanupError) {
         Alert.alert(
           "Match saved",
@@ -435,13 +494,14 @@ function TournamentContent() {
   const removeTeamMutation = useMutation({
     mutationFn: (teamId: string) => removeTournamentTeam(tournamentId, teamId),
     onSuccess: async () => {
-      await queryClient.invalidateQueries({
+
+      await queryClient.refetchQueries({
         queryKey: ["tournament", tournamentId],
       });
-      await queryClient.invalidateQueries({
+      await queryClient.refetchQueries({
         queryKey: ["activity", tournamentId],
       });
-      await queryClient.invalidateQueries({ queryKey: ["tournaments"] });
+      await queryClient.refetchQueries({ queryKey: ["tournaments"] });
       setConfirmation(null);
       setSelectedFixture(null);
     },
@@ -449,13 +509,14 @@ function TournamentContent() {
   const deleteFixtureMutation = useMutation({
     mutationFn: (fixtureId: string) => deleteTournamentFixture(fixtureId),
     onSuccess: async () => {
-      await queryClient.invalidateQueries({
+
+      await queryClient.refetchQueries({
         queryKey: ["tournament", tournamentId],
       });
-      await queryClient.invalidateQueries({
+      await queryClient.refetchQueries({
         queryKey: ["activity", tournamentId],
       });
-      await queryClient.invalidateQueries({ queryKey: ["tournaments"] });
+      await queryClient.refetchQueries({ queryKey: ["tournaments"] });
       setConfirmation(null);
       setSelectedFixture(null);
     },
@@ -522,12 +583,25 @@ function TournamentContent() {
         <View
           style={[
             styles.statusBadge,
-            data.tournament.status === "completed" &&
-              styles.statusBadgeComplete,
+
+            tournamentState === "not_started" && styles.statusBadgeNotStarted,
+            tournamentState === "active" && styles.statusBadgeActive,
+            tournamentState === "completed" && styles.statusBadgeComplete,
           ]}
         >
-          <Text style={styles.statusText}>
-            {data.tournament.status === "active" ? "ACTIVE" : "DONE"}
+          <Text
+            style={[
+              styles.statusText,
+              tournamentState === "not_started" && styles.statusTextNotStarted,
+              tournamentState === "active" && styles.statusTextActive,
+              tournamentState === "completed" && styles.statusTextComplete,
+            ]}
+          >
+            {tournamentState === "not_started"
+              ? "NOT STARTED"
+              : tournamentState === "active"
+                ? "ACTIVE"
+                : "COMPLETED"}
           </Text>
         </View>
         {isOwner ? (
@@ -676,11 +750,22 @@ function TournamentContent() {
               <TournamentTeams
                 teams={data.teams}
                 isOwner={Boolean(isOwner)}
-                canRemove={canEditFixtures}
+                canRemove={canEditFixtures && tournamentState === "not_started"}
+                tournamentState={tournamentState}
+                onOpenAddTeams={() => setAddTeamsVisible(true)}
                 completed={data.tournament.status === "completed"}
                 onRemove={(team) => {
                   removeTeamMutation.reset();
-                  setConfirmation({ kind: "removeTeam", team })
+                  if (tournamentState !== "not_started") {
+                    Alert.alert(
+                      "Teams Locked",
+                      tournamentState === "active"
+                        ? "Cannot remove teams while tournament fixtures are active."
+                        : "Cannot remove teams from a completed tournament.",
+                    );
+                    return;
+                  }
+                  setConfirmation({ kind: "removeTeam", team });
                 }}
               />
             ) : null}
@@ -740,11 +825,11 @@ function TournamentContent() {
             </Text>
             <Text style={styles.confirmBody}>
               {confirmation === "fixtures"
-                ? `${data.teams.length * (data.teams.length - 1)} matches across ${data.teams.length % 2 === 0 ? 2 * (data.teams.length - 1) : 2 * data.teams.length} matchdays. Every team plays each opponent home and away.`
+                ? `${data.teams.length * (data.teams.length - 1)} matches will be generated. Every team plays each opponent home and away.`
                 : confirmation === "final"
                   ? `${table[0]?.name ?? "First place"} and ${table[1]?.name ?? "Second place"} will play for the championship.`
                   : confirmation?.kind === "removeTeam"
-                    ? `${confirmation.team.name} and its fixtures and recorded results will be removed from this tournament. The team itself remains in your club.`
+                    ? `Remove ${confirmation.team.name} from this tournament? The team will remain in your club roster.`
                     : confirmation?.kind === "deleteFixture"
                       ? `Delete this ${confirmation.fixture.stage === "final" ? "final" : "league"} fixture and its result? This cannot be undone.`
                       : ""}
@@ -807,6 +892,17 @@ function TournamentContent() {
           tournamentName={data.tournament.name}
           visible={shareVisible}
           onClose={() => setShareVisible(false)}
+        />
+        <AddTeamsModal
+          visible={addTeamsVisible}
+          onClose={() => setAddTeamsVisible(false)}
+          onAdd={(teamIds) => addTeamsMutation.mutate(teamIds)}
+          isPending={addTeamsMutation.isPending}
+          clubTeams={clubTeamsQuery.data ?? []}
+          existingTeamIds={existingTeamIds}
+          tournamentName={data.tournament.name}
+        />
+        <View style={{ display: "none" }}
         />
       ) : null}
     </SafeAreaView>
@@ -927,11 +1023,11 @@ function Overview({
       ) : null}
       {isOwner && data.fixtures.length === 0 ? (
         <ActionBanner
-          title="The league is ready to schedule"
-          body="Generate the complete home-and-away fixture list."
-          action="Generate fixtures"
+          title={data.teams.length < 2 ? "Add teams to schedule" : "The league is ready to schedule"}
+          body={data.teams.length < 2 ? "Add at least 2 teams in the Teams tab before generating league fixtures." : "Generate the complete home-and-away fixture list."}
+          action={data.teams.length < 2 ? "Need 2+ teams" : "Generate fixtures"}
           busy={generating}
-          onPress={onGenerate}
+          onPress={data.teams.length < 2 ? () => Alert.alert("Teams Required", "Please add at least 2 teams in the Teams tab before generating fixtures.") : onGenerate}
         />
       ) : null}
       {data.fixtures.find((fixture) => fixture.stage === "final")?.status ===
@@ -1087,7 +1183,17 @@ function Fixtures({
     );
   const rounds = new Map<number, TournamentFixture[]>();
   const finals = fixtures.filter((fixture) => fixture.stage === "final");
-  const leagueFixtures = fixtures.filter((item) => item.stage === "league");
+  const leagueFixtures = fixtures
+    .filter((item) => item.stage === "league")
+    .sort((a, b) => {
+      const roundA = a.matchdays?.round_number ?? 0;
+      const roundB = b.matchdays?.round_number ?? 0;
+      if (roundA !== roundB) return roundA - roundB;
+      if (a.scheduled_at && b.scheduled_at) {
+        return a.scheduled_at.localeCompare(b.scheduled_at);
+      }
+      return a.id.localeCompare(b.id);
+    });
   const fixturesByPair = new Map<string, TournamentFixture[]>();
   for (const fixture of leagueFixtures) {
     const round = fixture.matchdays?.round_number ?? 0;
@@ -1114,7 +1220,27 @@ function Fixtures({
   }
   return (
     <View style={{ gap: spacing.lg }}>
-      {[...rounds.entries()]
+      {leagueFixtures.map((fixture, index) => {
+        const home = teamById.get(fixture.home_team_id);
+        const away = teamById.get(fixture.away_team_id);
+        return (
+          <View key={fixture.id}>
+            <Text style={styles.groupTitle}>Match {index + 1}</Text>
+            <FixtureCard
+              fixture={fixture}
+              home={home?.name ?? "Home"}
+              homeLogoPath={home?.logo_path}
+              away={away?.name ?? "Away"}
+              awayLogoPath={away?.logo_path}
+              leg={legsByFixture.get(fixture.id)}
+              canEdit={canEdit}
+              onPress={() => onSelect(fixture)}
+              onDelete={() => onDelete(fixture)}
+            />
+          </View>
+        );
+      })}
+      {/* discard old rounds
         .sort(([a], [b]) => a - b)
         .map(([round, matches]) => (
           <View key={round}>
@@ -1139,6 +1265,7 @@ function Fixtures({
             })}
           </View>
         ))}
+      */}
       {finals.length ? (
         <View>
           <Text style={styles.groupTitle}>THE FINAL</Text>
@@ -1438,7 +1565,7 @@ function TableSection({
                   >
                     {label}
                   </Text>
-                ),
+          
               )}
             </View>
             {table.map((row) => (
@@ -1585,6 +1712,351 @@ function TournamentTeams({
   isOwner,
   canRemove,
   completed,
+  tournamentState,
+  onOpenAddTeams,
+  onRemove,
+}: {
+  teams: Array<{ id: string; name: string; logo_path: string | null }>;
+  isOwner: boolean;
+  canRemove: boolean;
+  completed: boolean;
+  tournamentState: "not_started" | "active" | "completed";
+  onOpenAddTeams: () => void;
+  onRemove: (team: { id: string; name: string }) => void;
+}) {
+  return (
+    <View>
+      <View style={styles.teamsHeaderRow}>
+        <View style={{ flex: 1 }}>
+          <Text style={styles.sectionTitle}>Participating teams</Text>
+          <Text style={styles.panelMeta}>
+            {teams.length} clubs ·{" "}
+            {tournamentState === "not_started"
+              ? "roster can be edited freely"
+              : tournamentState === "active"
+                ? "fixtures active · roster locked"
+                : "tournament completed · archived"}
+          </Text>
+        </View>
+        {isOwner ? (
+          <Pressable
+            accessibilityRole="button"
+            onPress={() => {
+              if (tournamentState === "not_started") {
+                onOpenAddTeams();
+              } else if (tournamentState === "active") {
+                Alert.alert(
+                  "Tournament Active",
+                  "Fixtures have already been generated. Teams cannot be added while the tournament is in progress.",
+                );
+              } else {
+                Alert.alert(
+                  "Tournament Completed",
+                  "This tournament is completed. Team rosters cannot be modified.",
+                );
+              }
+            }}
+            style={[
+              styles.addTeamsButton,
+              tournamentState !== "not_started" && styles.addTeamsButtonLocked,
+            ]}
+          >
+            {tournamentState === "not_started" ? (
+              <>
+                <Plus color={colors.background} size={15} />
+                <Text style={styles.addTeamsButtonText}>Add teams</Text>
+              </>
+            ) : (
+              <>
+                <Lock color={colors.muted} size={13} />
+                <Text style={styles.addTeamsButtonTextLocked}>Locked</Text>
+              </>
+            )}
+          </Pressable>
+        ) : null}
+      </View>
+
+      {tournamentState === "not_started" ? (
+        <View style={styles.stateNoticeNotStarted}>
+          <ShieldCheck color={colors.accent} size={16} />
+          <Text style={styles.stateNoticeNotStartedText}>
+            Tournament not started. You can add new teams or remove teams before generating fixtures.
+          </Text>
+        </View>
+      ) : tournamentState === "active" ? (
+        <View style={styles.stateNoticeActive}>
+          <Lock color="#EAB308" size={16} />
+          <Text style={styles.stateNoticeActiveText}>
+            Tournament is active. Participating teams are locked to preserve the fixture schedule and standings.
+          </Text>
+        </View>
+      ) : (
+        <View style={styles.stateNoticeCompleted}>
+          <Trophy color={colors.gold} size={16} />
+          <Text style={styles.stateNoticeCompletedText}>
+            Tournament is completed. Team rosters and final results are permanently archived.
+          </Text>
+        </View>
+      )}
+
+      <View style={styles.teamList}>
+        {teams.map((team) => (
+          <View key={team.id} style={styles.tournamentTeam}>
+            <TeamCrest name={team.name} logoPath={team.logo_path} size={38} />
+            <Text style={styles.tournamentTeamName}>{team.name}</Text>
+            {isOwner ? (
+              tournamentState === "not_started" ? (
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel={`Remove ${team.name} from tournament`}
+                  onPress={() => onRemove({ id: team.id, name: team.name })}
+                  style={styles.teamRemove}
+                >
+                  <Trash2 color={colors.danger} size={16} />
+                </Pressable>
+              ) : (
+                <Pressable
+                  accessibilityRole="button"
+                  onPress={() => {
+                    Alert.alert(
+                      "Teams Locked",
+                      tournamentState === "active"
+                        ? "Cannot remove teams while tournament fixtures are active."
+                        : "Cannot remove teams from a completed tournament.",
+                    );
+                  }}
+                  style={[styles.teamRemove, { opacity: 0.45 }]}
+                >
+                  <Lock color={colors.dim} size={14} />
+                </Pressable>
+              )
+            ) : (
+              <Shield color={colors.dim} size={15} />
+            )}
+          </View>
+        ))}
+      </View>
+    </View>
+  );
+}
+
+function AddTeamsModal({
+  visible,
+  onClose,
+  onAdd,
+  isPending,
+  clubTeams,
+  existingTeamIds,
+  tournamentName,
+}: {
+  visible: boolean;
+  onClose: () => void;
+  onAdd: (selectedIds: string[]) => void;
+  isPending: boolean;
+  clubTeams: TeamRecord[];
+  existingTeamIds: Set<string>;
+  tournamentName: string;
+}) {
+  const [searchQuery, setSearchQuery] = useState("");
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+
+  const availableTeams = useMemo(
+    () => clubTeams.filter((t) => !existingTeamIds.has(t.id)),
+    [clubTeams, existingTeamIds],
+  );
+
+  const filteredTeams = useMemo(
+    () =>
+      availableTeams.filter((t) =>
+        t.name.toLowerCase().includes(searchQuery.trim().toLowerCase()),
+      ),
+    [availableTeams, searchQuery],
+  );
+
+  useEffect(() => {
+    if (visible) {
+      setSelectedIds([]);
+      setSearchQuery("");
+    }
+  }, [visible]);
+
+  const toggleTeam = (id: string) => {
+    setSelectedIds((prev) =>
+      prev.includes(id) ? prev.filter((i) => i !== id) : [...prev, id],
+    );
+  };
+
+  const selectAll = () => {
+    if (selectedIds.length === filteredTeams.length) {
+      setSelectedIds([]);
+    } else {
+      setSelectedIds(filteredTeams.map((t) => t.id));
+    }
+  };
+
+  return (
+    <Modal
+      visible={visible}
+      transparent
+      animationType="slide"
+      onRequestClose={() => {
+        if (!isPending) onClose();
+      }}
+    >
+      <View style={styles.modalOverlay}>
+        <View style={styles.modalSheet}>
+          <View style={styles.modalHeader}>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.modalTitle}>Add Teams</Text>
+              <Text style={styles.modalSub} numberOfLines={1}>
+                {tournamentName}
+              </Text>
+            </View>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Close"
+              disabled={isPending}
+              onPress={onClose}
+              style={styles.modalClose}
+            >
+              <X color={colors.text} size={18} />
+            </Pressable>
+          </View>
+
+          {availableTeams.length === 0 ? (
+            <View style={styles.modalEmpty}>
+              <ShieldCheck color={colors.accent} size={36} />
+              <Text style={styles.modalEmptyTitle}>All Club Teams Added</Text>
+              <Text style={styles.modalEmptyBody}>
+                Every team in your club roster is already participating in this
+                tournament.
+              </Text>
+              <Pressable
+                accessibilityRole="button"
+                onPress={onClose}
+                style={[styles.actionButton, { marginTop: spacing.md }]}
+              >
+                <Text style={styles.actionButtonText}>Done</Text>
+              </Pressable>
+            </View>
+          ) : (
+            <>
+              {availableTeams.length > 5 ? (
+                <View style={styles.modalSearchRow}>
+                  <Search color={colors.dim} size={16} />
+                  <TextInput
+                    value={searchQuery}
+                    onChangeText={setSearchQuery}
+                    placeholder="Search club teams…"
+                    placeholderTextColor={colors.dim}
+                    style={styles.modalSearchInput}
+                  />
+                  {searchQuery ? (
+                    <Pressable onPress={() => setSearchQuery("")}>
+                      <X color={colors.dim} size={15} />
+                    </Pressable>
+                  ) : null}
+                </View>
+              ) : null}
+
+              {filteredTeams.length > 1 ? (
+                <View style={styles.modalSelectionSummary}>
+                  <Text style={styles.modalSelectionCount}>
+                    {selectedIds.length} of {filteredTeams.length} selected
+                  </Text>
+                  <Pressable onPress={selectAll}>
+                    <Text style={styles.modalSelectAll}>
+                      {selectedIds.length === filteredTeams.length
+                        ? "Deselect all"
+                        : "Select all"}
+                    </Text>
+                  </Pressable>
+                </View>
+              ) : null}
+
+              <ScrollView
+                style={{ maxHeight: 320, marginTop: 8 }}
+                showsVerticalScrollIndicator={false}
+              >
+                {filteredTeams.map((team) => {
+                  const isSelected = selectedIds.includes(team.id);
+                  return (
+                    <Pressable
+                      key={team.id}
+                      onPress={() => toggleTeam(team.id)}
+                      style={[
+                        styles.teamPickerRow,
+                        isSelected && styles.teamPickerRowSelected,
+                      ]}
+                    >
+                      <View
+                        style={[
+                          styles.checkbox,
+                          isSelected && styles.checkboxSelected,
+                        ]}
+                      >
+                        {isSelected ? (
+                          <Check color={colors.background} size={13} />
+                        ) : null}
+                      </View>
+                      <TeamCrest
+                        name={team.name}
+                        logoPath={team.logo_path}
+                        size={34}
+                      />
+                      <Text style={styles.teamPickerName} numberOfLines={1}>
+                        {team.name}
+                      </Text>
+                    </Pressable>
+                  );
+                })}
+              </ScrollView>
+
+              <View style={styles.modalFooterActions}>
+                <Pressable
+                  accessibilityRole="button"
+                  disabled={isPending}
+                  onPress={onClose}
+                  style={styles.modalCancelBtn}
+                >
+                  <Text style={styles.modalCancelBtnText}>Cancel</Text>
+                </Pressable>
+                <Pressable
+                  accessibilityRole="button"
+                  disabled={selectedIds.length === 0 || isPending}
+                  onPress={() => onAdd(selectedIds)}
+                  style={[
+                    styles.modalSubmitBtn,
+                    (selectedIds.length === 0 || isPending) && styles.disabled,
+                  ]}
+                >
+                  {isPending ? (
+                    <ActivityIndicator color={colors.background} />
+                  ) : (
+                    <>
+                      <Plus color={colors.background} size={16} />
+                      <Text style={styles.modalSubmitBtnText}>
+                        Add {selectedIds.length || ""}{" "}
+                        {selectedIds.length === 1 ? "team" : "teams"}
+                      </Text>
+                    </>
+                  )}
+                </Pressable>
+              </View>
+            </>
+          )}
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
+/* discard old TournamentTeams
+function TournamentTeams({
+  teams,
+  isOwner,
+  canRemove,
+  completed,
   onRemove,
 }: {
   teams: Array<{ id: string; name: string; logo_path: string | null }>;
@@ -1628,6 +2100,7 @@ function TournamentTeams({
   );
 }
 
+*/
 function ActivityFeed({
   activity,
   loading,
@@ -2771,4 +3244,236 @@ const styles = createThemedStyles({
     gap: 8,
   },
   revertText: { color: colors.muted, fontSize: 11, fontWeight: "700" },
+  statusBadgeNotStarted: {
+    backgroundColor: "rgba(234, 179, 8, 0.16)",
+    borderWidth: 1,
+    borderColor: "rgba(234, 179, 8, 0.4)",
+  },
+  statusBadgeActive: {
+    backgroundColor: "#21372B",
+    borderWidth: 1,
+    borderColor: "rgba(34, 197, 94, 0.4)",
+  },
+  statusTextNotStarted: { color: "#EAB308" },
+  statusTextActive: { color: colors.accent },
+  statusTextComplete: { color: "#A5B4FC" },
+  teamsHeaderRow: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    justifyContent: "space-between",
+    gap: 12,
+  },
+  addTeamsButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    backgroundColor: colors.accent,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: radii.pill,
+  },
+  addTeamsButtonText: {
+    color: colors.background,
+    fontSize: 11,
+    fontWeight: "900",
+  },
+  addTeamsButtonLocked: {
+    backgroundColor: colors.elevated,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  addTeamsButtonTextLocked: {
+    color: colors.muted,
+    fontSize: 11,
+    fontWeight: "800",
+  },
+  stateNoticeNotStarted: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    backgroundColor: "rgba(34, 197, 94, 0.08)",
+    borderWidth: 1,
+    borderColor: "rgba(34, 197, 94, 0.25)",
+    borderRadius: radii.sm,
+    padding: spacing.md,
+    marginTop: spacing.md,
+  },
+  stateNoticeNotStartedText: {
+    flex: 1,
+    color: colors.text,
+    fontSize: 11,
+    lineHeight: 16,
+  },
+  stateNoticeActive: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    backgroundColor: "rgba(234, 179, 8, 0.08)",
+    borderWidth: 1,
+    borderColor: "rgba(234, 179, 8, 0.25)",
+    borderRadius: radii.sm,
+    padding: spacing.md,
+    marginTop: spacing.md,
+  },
+  stateNoticeActiveText: {
+    flex: 1,
+    color: "#EAB308",
+    fontSize: 11,
+    lineHeight: 16,
+  },
+  stateNoticeCompleted: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    backgroundColor: "rgba(99, 102, 241, 0.08)",
+    borderWidth: 1,
+    borderColor: "rgba(99, 102, 241, 0.25)",
+    borderRadius: radii.sm,
+    padding: spacing.md,
+    marginTop: spacing.md,
+  },
+  stateNoticeCompletedText: {
+    flex: 1,
+    color: "#A5B4FC",
+    fontSize: 11,
+    lineHeight: 16,
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.72)",
+    justifyContent: "flex-end",
+  },
+  modalSheet: {
+    maxHeight: "85%",
+    backgroundColor: colors.surface,
+    borderTopLeftRadius: radii.lg,
+    borderTopRightRadius: radii.lg,
+    padding: spacing.lg,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  modalHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: spacing.md,
+  },
+  modalTitle: { color: colors.text, fontSize: 17, fontWeight: "900" },
+  modalSub: { color: colors.muted, fontSize: 12, marginTop: 2 },
+  modalClose: {
+    width: 34,
+    height: 34,
+    borderRadius: radii.sm,
+    backgroundColor: colors.elevated,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  modalEmpty: {
+    alignItems: "center",
+    justifyContent: "center",
+    paddingVertical: spacing.xl,
+    gap: 10,
+  },
+  modalEmptyTitle: { color: colors.text, fontSize: 15, fontWeight: "900" },
+  modalEmptyBody: {
+    color: colors.muted,
+    fontSize: 12,
+    textAlign: "center",
+    lineHeight: 18,
+    paddingHorizontal: spacing.lg,
+  },
+  modalSearchRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    backgroundColor: colors.elevated,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radii.sm,
+    paddingHorizontal: spacing.md,
+    height: 42,
+    marginBottom: 8,
+  },
+  modalSearchInput: {
+    flex: 1,
+    color: colors.text,
+    fontSize: 12,
+    paddingVertical: 0,
+  },
+  modalSelectionSummary: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingVertical: 4,
+    marginBottom: 6,
+  },
+  modalSelectionCount: { color: colors.muted, fontSize: 11, fontWeight: "700" },
+  modalSelectAll: { color: colors.accent, fontSize: 11, fontWeight: "800" },
+  teamPickerRow: {
+    minHeight: 52,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 11,
+    paddingHorizontal: spacing.md,
+    backgroundColor: colors.elevated,
+    borderRadius: radii.sm,
+    marginBottom: 8,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  teamPickerRowSelected: {
+    borderColor: colors.accent,
+    backgroundColor: "#15241C",
+  },
+  checkbox: {
+    width: 22,
+    height: 22,
+    borderRadius: 6,
+    borderWidth: 1.5,
+    borderColor: colors.dim,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  checkboxSelected: {
+    backgroundColor: colors.accent,
+    borderColor: colors.accent,
+  },
+  teamPickerName: {
+    flex: 1,
+    color: colors.text,
+    fontSize: 13,
+    fontWeight: "800",
+  },
+  modalFooterActions: {
+    flexDirection: "row",
+    gap: 10,
+    marginTop: spacing.md,
+    paddingTop: spacing.sm,
+  },
+  modalCancelBtn: {
+    flex: 1,
+    height: 46,
+    borderRadius: radii.sm,
+    backgroundColor: colors.elevated,
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  modalCancelBtnText: { color: colors.muted, fontSize: 13, fontWeight: "800" },
+  modalSubmitBtn: {
+    flex: 2,
+    height: 46,
+    borderRadius: radii.sm,
+    backgroundColor: colors.accent,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 7,
+  },
+  modalSubmitBtnText: {
+    color: colors.background,
+    fontSize: 13,
+    fontWeight: "900",
+  },
 });

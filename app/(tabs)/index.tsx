@@ -587,8 +587,8 @@ const styles = createThemedStyles({
     borderRadius: radii.md,
     borderWidth: 1,
     borderColor: colors.accent,
-    paddingVertical: 10,
-    paddingHorizontal: 14,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
     overflow: "hidden",
   },
   setupHeroLabel: {
@@ -607,12 +607,12 @@ const styles = createThemedStyles({
   },
   setupHeroBody: { color: colors.muted, fontSize: 11, lineHeight: 15 },
   setupClubActions: {
-    marginTop: spacing.sm,
-    gap: 7,
+    marginTop: 10,
+    gap: 8,
   },
   setupHeroButton: {
     alignSelf: "flex-start",
-    minHeight: 38,
+    minHeight: 40,
     paddingHorizontal: spacing.md,
     gap: 7,
     flexDirection: "row",
@@ -622,7 +622,7 @@ const styles = createThemedStyles({
     borderRadius: radii.sm,
   },
   setupSecondaryAction: {
-    minHeight: 38,
+    minHeight: 40,
     paddingHorizontal: spacing.md,
     alignItems: "center",
     justifyContent: "center",

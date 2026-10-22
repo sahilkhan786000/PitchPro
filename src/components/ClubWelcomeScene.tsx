@@ -120,8 +120,8 @@ export function ClubWelcomeScene() {
 
 const styles = StyleSheet.create({
   scene: {
-    height: 112,
-    marginBottom: spacing.sm,
+    height: 148,
+    marginBottom: 14,
     borderRadius: radii.md,
     overflow: "hidden",
     borderWidth: 1,
@@ -139,7 +139,7 @@ const styles = StyleSheet.create({
   },
   indicators: {
     position: "absolute",
-    bottom: 6,
+    bottom: 8,
     alignSelf: "center",
     flexDirection: "row",
     alignItems: "center",
