@@ -1,7 +1,7 @@
 import { Link } from "expo-router";
 import { ArrowRight, LockKeyhole } from "lucide-react-native";
 import { useRef } from "react";
-import { Text, View } from "react-native";
+import { Pressable, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { AuthGlassPanel } from "./AuthGlassPanel";
@@ -61,21 +61,23 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
             Sign in to manage teams, run fixtures, and follow the table as
             results come in.
           </Text>
-          <Link href="/login" style={styles.primaryLink}>
-            <View style={styles.primaryLinkContent}>
-              <Text
-                style={[
-                  styles.primaryLinkText,
-                  mode === "light" && styles.lightButtonText,
-                ]}
-              >
-                Sign in
-              </Text>
-              <ArrowRight
-                color={mode === "light" ? colors.text : colors.background}
-                size={17}
-              />
-            </View>
+          <Link href="/login" asChild>
+            <Pressable style={styles.primaryLink}>
+              <View style={styles.primaryLinkContent}>
+                <Text
+                  style={[
+                    styles.primaryLinkText,
+                    mode === "light" && styles.lightButtonText,
+                  ]}
+                >
+                  Sign in
+                </Text>
+                <ArrowRight
+                  color={mode === "light" ? colors.text : colors.background}
+                  size={17}
+                />
+              </View>
+            </Pressable>
           </Link>
           <Link href="/signup" style={styles.secondaryLink}>
             Create account

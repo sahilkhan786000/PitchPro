@@ -6,7 +6,7 @@
 2. Add `pitchpro://**` (and the relevant local development callback URLs) to Auth's allowed redirect URLs.
 3. Add the project URL and public anon/publishable key to local `.env` as `EXPO_PUBLIC_SUPABASE_KEY` or `EXPO_PUBLIC_SUPABASE_ANON_KEY`.
 4. Install the Supabase CLI, sign in with `npx supabase login`, link with `npx supabase link --project-ref <project-ref>`, then apply the migration with `npx supabase db push`.
-5. Confirm the `team-logos` and `tournament-logos` private buckets exist. The migration creates them and their policies.
+5. Confirm the `team-logos`, `tournament-logos`, and `match-notes` private buckets exist. The migrations create them and their policies.
 6. Confirm the `fixtures`, `activity_events`, and `notifications` tables are in `supabase_realtime`.
 7. Set up backups and point-in-time recovery according to the selected Supabase plan.
 

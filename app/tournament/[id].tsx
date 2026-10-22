@@ -547,7 +547,7 @@ function TournamentContent() {
       </SafeAreaView>
     );
     /*
-          */}
+          //
         </>
       ) : null}
     </SafeAreaView>
@@ -570,7 +570,7 @@ function TournamentContent() {
     );
     /*
         </Pressable>
-          */}
+          //
         </>
       ) : null}
     </SafeAreaView>
@@ -1585,7 +1585,7 @@ function TableSection({
                     {label}
                   </Text>
           
-              )}
+              ))}
             </View>
             {table.map((row) => (
               <View
@@ -2307,14 +2307,14 @@ function ResultModal({
 
   return (
     <View style={styles.resultEditor}>
-      <View style={styles.modalHeader}>
+      <View style={styles.resultModalHeader}>
         <View>
           <Text style={styles.fixtureRound}>
             {fixture.stage === "final"
               ? "THE FINAL"
               : `Match ${fixture.matchdays?.round_number ?? "—"}`}
           </Text>
-          <Text style={styles.modalTitle}>
+          <Text style={styles.resultModalTitle}>
             {canEdit ? "Match result" : "Match details"}
           </Text>
         </View>
@@ -3114,7 +3114,7 @@ const styles = createThemedStyles({
     marginBottom: spacing.lg,
   },
   modalSafe: { flex: 1, backgroundColor: colors.background },
-  modalHeader: {
+  resultModalHeader: {
     padding: spacing.lg,
     flexDirection: "row",
     alignItems: "center",
@@ -3122,7 +3122,7 @@ const styles = createThemedStyles({
     borderBottomWidth: 1,
     borderBottomColor: colors.border,
   },
-  modalTitle: {
+  resultModalTitle: {
     color: colors.text,
     fontSize: 18,
     fontWeight: "900",
