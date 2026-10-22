@@ -78,7 +78,7 @@ function TournamentsContent() {
 
         return matchesFilter && matchesSearch;
       }),
-    [query.data, search, session?.user.id, status],
+    [query.data, search, session, status],
   );
 
   return (
@@ -107,7 +107,12 @@ function TournamentsContent() {
             style={styles.searchInput}
           />
         </View>
-        <View style={styles.filters}>
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator
+          style={styles.filterScroll}
+          contentContainerStyle={styles.filters}
+        >
           {(["all", "active", "completed", "mine", "shared"] as const).map(
             (value) => (
               <Pressable
@@ -134,7 +139,7 @@ function TournamentsContent() {
               </Pressable>
             ),
           )}
-        </View>
+        </ScrollView>
         {query.isLoading ? (
           <ActivityIndicator color={colors.accent} style={{ marginTop: 40 }} />
         ) : null}
@@ -344,8 +349,10 @@ const styles = createThemedStyles({
     paddingHorizontal: spacing.md,
   },
   searchInput: { flex: 1, color: colors.text, fontSize: 13 },
-  filters: { flexDirection: "row", gap: 8, marginVertical: spacing.md },
+  filterScroll: { marginVertical: spacing.md },
+  filters: { flexDirection: "row", gap: 8, paddingRight: spacing.lg },
   filter: {
+    flexShrink: 0,
     paddingVertical: 8,
     paddingHorizontal: 13,
     backgroundColor: colors.surface,

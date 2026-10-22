@@ -344,8 +344,8 @@ export function AuthProvider({ children }: PropsWithChildren) {
   };
 
   const clearClub = async () => {
-    setClub(null);
     await deleteSecureStoreValue(SecureStore, ACTIVE_CLUB_KEY);
+    setClub(null);
   };
 
   const value: AuthContextValue = {

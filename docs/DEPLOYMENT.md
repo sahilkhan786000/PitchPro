@@ -23,11 +23,10 @@ In Supabase Dashboard, create a Database Webhook for `public.notifications`, `IN
 
 ## EAS and Native IDs
 
-1. Create or select an EAS project and run `npx eas-cli init`.
-2. Link the generated EAS project UUID to this app.
-3. Set `PITCHPRO_ANDROID_PACKAGE` and `PITCHPRO_IOS_BUNDLE_ID` to identifiers you own. The app intentionally does not claim third-party identifiers.
-4. Add `EXPO_PUBLIC_SUPABASE_URL`, either `EXPO_PUBLIC_SUPABASE_KEY` or `EXPO_PUBLIC_SUPABASE_ANON_KEY`, `PITCHPRO_ANDROID_PACKAGE`, and `PITCHPRO_IOS_BUNDLE_ID` to EAS environments used for builds. These Supabase client values are public configuration, not service-role credentials.
-5. Keep EAS credentials remote unless your organization requires local signing material.
+1. The Android application ID is `com.azal.pitchpro`. Confirm it is available in Google Play Console before the first upload; it becomes permanent once published.
+2. Sign in to EAS with `npx eas-cli login`, then run `npx eas-cli init` to create or select the EAS project and link its project UUID to this app.
+3. Set `EXPO_PUBLIC_SUPABASE_URL` and either `EXPO_PUBLIC_SUPABASE_KEY` or `EXPO_PUBLIC_SUPABASE_ANON_KEY` in the EAS environment used for production builds. These Supabase client values are public configuration, not service-role credentials. The Android package ID is set in `app.json`; do not change it after publishing.
+4. Set `PITCHPRO_IOS_BUNDLE_ID` only if preparing an iOS release. Keep EAS signing credentials remote unless your organization requires local signing material.
 
 `eas.json` provides development, preview, and production profiles:
 
@@ -41,6 +40,28 @@ npx eas-cli build --profile production --platform ios
 ```
 
 The production Android output is an `.aab`. iOS store builds require Apple Developer membership, provisioning, and EAS signing credentials. No build has been claimed or completed in this setup.
+
+## Android Google Play Release
+
+1. Enroll in a Google Play Developer account and create the PitchPro app in [Play Console](https://play.google.com/console/). The Play app's package name must be `com.azal.pitchpro`.
+2. Complete the Google Play API access setup, create a service account with access to this app, and upload its JSON key to the linked EAS project under **Credentials → Android → Google service account key for EAS Submit**. Never commit the key or put it in app environment variables.
+3. Configure the production Supabase URL and public client key in EAS. Verify the production backend, Auth redirect URLs, database migrations, storage buckets, and policies before release.
+4. Build the Android App Bundle:
+
+   ```powershell
+   npm run build:android
+   ```
+
+5. Submit the finished build to internal testing:
+
+   ```powershell
+   npx eas-cli submit --platform android --profile production --latest
+   ```
+
+   The production submit profile deliberately targets the **internal** testing track first. Install and exercise the Play testing build on real devices before proceeding.
+6. Complete the Play listing and required app-content declarations (including privacy policy, data safety, account deletion, and review access where applicable), then create and submit a production release in Play Console. Google review and any account-specific testing requirements must be completed before general availability.
+
+An EAS upload does not itself make the app publicly available. The app becomes installable by all Play Store users only after its production release is approved and rolled out in Play Console.
 
 ## Push Credentials
 

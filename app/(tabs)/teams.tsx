@@ -1,5 +1,6 @@
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { File } from "expo-file-system";
 import * as ImagePicker from "expo-image-picker";
 import {
   Camera,
@@ -35,6 +36,7 @@ import {
   listTeams,
   type TeamRecord,
 } from "@/src/features/tournaments/api";
+import { getLogoFileType } from "@/src/features/tournaments/logoFile";
 import { useAuth } from "@/src/lib/auth";
 import { supabase } from "@/src/lib/supabase";
 import { useThemeRefresh } from "@/src/theme/ThemeContext";
@@ -96,12 +98,6 @@ function TeamsContent() {
       try {
         if (asset) {
           if (
-            !["image/png", "image/jpeg", "image/webp"].includes(
-              asset.mimeType ?? "",
-            )
-          )
-            throw new Error("Choose a PNG, JPEG, or WebP image.");
-          if (
             asset.width < 64 ||
             asset.height < 64 ||
             asset.width > 4096 ||
@@ -115,22 +111,18 @@ function TeamsContent() {
               "Your session is no longer available. Sign in again.",
             );
           setUploading(true);
-          const blob = await fetch(asset.uri).then((response) =>
-            response.blob(),
-          );
-          if (blob.size > maxBytes)
+          const imageFile = new File(asset.uri);
+          if (imageFile.size > maxBytes)
             throw new Error("Logo files must be 5 MB or smaller.");
-          const extension =
-            asset.mimeType === "image/png"
-              ? "png"
-              : asset.mimeType === "image/webp"
-                ? "webp"
-                : "jpg";
+          const imageBytes = new Uint8Array(await imageFile.arrayBuffer());
+          if (imageBytes.byteLength > maxBytes)
+            throw new Error("Logo files must be 5 MB or smaller.");
+          const { mimeType, extension } = getLogoFileType(imageBytes);
           const uniqueName = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}.${extension}`;
           path = `${session.user.id}/${uniqueName}`;
           const { error } = await supabase.storage
             .from("team-logos")
-            .upload(path, blob, { contentType: asset.mimeType, upsert: false });
+            .upload(path, imageBytes, { contentType: mimeType, upsert: false });
           if (error) throw error;
         }
         if (!club) throw new Error("Join a Club before creating a team.");

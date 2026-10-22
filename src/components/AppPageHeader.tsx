@@ -1,5 +1,4 @@
-import { router } from "expo-router";
-import { House, MoonStar, SunMedium, Trophy } from "lucide-react-native";
+import { MoonStar, SunMedium, Trophy } from "lucide-react-native";
 import { Pressable, Text, View } from "react-native";
 
 import { useAuth } from "@/src/lib/auth";
@@ -13,27 +12,12 @@ export function AppPageHeader({
   showBrand?: boolean;
   centered?: boolean;
 }) {
-  const { club, clearClub } = useAuth();
+  const { club } = useAuth();
   const { mode, toggleTheme } = useAppTheme();
-
-  const handleClearClub = async () => {
-    await clearClub();
-    router.replace("/(tabs)");
-  };
 
   return (
     <View style={[styles.header, centered && styles.centeredHeader]}>
       <View style={styles.headerLeft}>
-        {club ? (
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="Leave Club"
-            onPress={handleClearClub}
-            style={styles.iconButton}
-          >
-            <House color={colors.text} size={18} />
-          </Pressable>
-        ) : null}
         {showBrand && !centered ? (
           <BrandLockup name={club?.name ?? "PitchPRO"} />
         ) : null}

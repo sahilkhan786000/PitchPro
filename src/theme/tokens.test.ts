@@ -29,13 +29,18 @@ describe("theme tokens", () => {
       page: { backgroundColor: darkColors.background },
       title: { color: darkColors.text },
     });
+    const darkPageStyle = styles.page;
 
     applyTheme("light");
     expect(styles.page.backgroundColor).toBe(lightColors.background);
     expect(styles.title.color).toBe(lightColors.text);
+    expect(styles.page).not.toBe(darkPageStyle);
+    const lightPageStyle = styles.page;
+    expect(styles.page).toBe(lightPageStyle);
 
     applyTheme("dark");
     expect(styles.page.backgroundColor).toBe(darkColors.background);
+    expect(styles.page).toBe(darkPageStyle);
   });
 
   it("restores dark colors for styles created after selecting light mode", () => {

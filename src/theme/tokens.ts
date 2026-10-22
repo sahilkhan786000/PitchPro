@@ -92,30 +92,41 @@ const themedStyleCache = new WeakMap<
   Partial<Record<ThemeMode, object>>
 >();
 
-function resolveThemedValue(value: unknown, sourceTheme: ThemeMode): unknown {
+function resolveThemedValue(
+  value: unknown,
+  sourceTheme: ThemeMode,
+  targetTheme: ThemeMode,
+): unknown {
   if (typeof value === "string") {
-    if (sourceTheme === activeTheme) return value;
+    if (sourceTheme === targetTheme) return value;
     return sourceTheme === "dark"
       ? (lightColorByDark.get(value) ?? value)
       : (darkColorByLight.get(value) ?? value);
   }
   if (value === null || typeof value !== "object") return value;
 
-  const cacheByTheme = themedStyleCache.get(value);
-  const cached = cacheByTheme?.[sourceTheme];
+  const cached = themedStyleCache.get(value)?.[targetTheme];
   if (cached) return cached;
 
-  const themedValue = new Proxy(value, {
-    get(target, property, receiver) {
-      return resolveThemedValue(
-        Reflect.get(target, property, receiver),
-        sourceTheme,
-      );
-    },
-  });
+  if (Array.isArray(value)) {
+    const themedValue = value.map((item) =>
+      resolveThemedValue(item, sourceTheme, targetTheme),
+    );
+    themedStyleCache.set(value, {
+      ...themedStyleCache.get(value),
+      [targetTheme]: themedValue,
+    });
+    return themedValue;
+  }
+  const themedValue = Object.fromEntries(
+    Object.entries(value).map(([key, item]) => [
+      key,
+      resolveThemedValue(item, sourceTheme, targetTheme),
+    ]),
+  );
   themedStyleCache.set(value, {
-    ...cacheByTheme,
-    [sourceTheme]: themedValue,
+    ...themedStyleCache.get(value),
+    [targetTheme]: themedValue,
   });
   return themedValue;
 }
@@ -125,7 +136,16 @@ type NamedStyles<T> = {
 };
 
 export function createThemedStyles<T extends NamedStyles<T>>(styles: T): T {
-  return resolveThemedValue(styles, activeTheme) as T;
+  const sourceTheme = activeTheme;
+  return new Proxy(styles, {
+    get(target, property, receiver) {
+      return resolveThemedValue(
+        Reflect.get(target, property, receiver),
+        sourceTheme,
+        activeTheme,
+      );
+    },
+  });
 }
 
 export function applyTheme(mode: ThemeMode) {

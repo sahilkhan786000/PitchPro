@@ -3,6 +3,7 @@ import { router } from "expo-router";
 import {
   ChevronRight,
   LogOut,
+  Plus,
   ShieldCheck,
   UserRound,
 } from "lucide-react-native";
@@ -31,7 +32,7 @@ export default function ProfileScreen() {
 }
 
 function ProfileContent() {
-  const { session, signOut } = useAuth();
+  const { session, signOut, clearClub } = useAuth();
   const client = useQueryClient();
   const profileQuery = useQuery({
     queryKey: ["profile", session?.user.id],
@@ -54,6 +55,12 @@ function ProfileContent() {
       router.replace("/login");
     },
   });
+  const openClubSetup = useMutation({
+    mutationFn: async () => {
+      await clearClub();
+      router.replace("/(tabs)");
+    },
+  });
   const name =
     profileQuery.data?.full_name ??
     session?.user.user_metadata.full_name ??
@@ -63,7 +70,18 @@ function ProfileContent() {
   return (
     <SafeAreaView style={styles.safe} edges={["left", "right", "bottom"]}>
       <ScrollView contentContainerStyle={styles.page}>
-        <Text style={styles.title}>Profile</Text>
+        <View style={styles.titleRow}>
+          <Text style={styles.title}>Profile</Text>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Create or join a club"
+            disabled={openClubSetup.isPending}
+            onPress={() => openClubSetup.mutate()}
+            style={styles.addClub}
+          >
+            <Plus color={colors.background} size={20} />
+          </Pressable>
+        </View>
         <View style={styles.identity}>
           <View style={styles.avatar}>
             <Text style={styles.avatarText}>
@@ -83,6 +101,9 @@ function ProfileContent() {
         ) : null}
         {profileQuery.isError ? (
           <Text style={styles.errorText}>Couldn’t load profile details.</Text>
+        ) : null}
+        {openClubSetup.error ? (
+          <Text style={styles.errorText}>{openClubSetup.error.message}</Text>
         ) : null}
         <Text style={styles.sectionLabel}>ACCOUNT</Text>
         <View style={styles.infoRow}>
@@ -140,7 +161,20 @@ const styles = createThemedStyles({
     color: colors.text,
     fontSize: 30,
     fontWeight: "900",
+  },
+  titleRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
     marginBottom: spacing.xl,
+  },
+  addClub: {
+    width: 42,
+    height: 42,
+    borderRadius: radii.sm,
+    backgroundColor: colors.accent,
+    alignItems: "center",
+    justifyContent: "center",
   },
   identity: {
     flexDirection: "row",

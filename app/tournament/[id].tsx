@@ -1,3 +1,5 @@
+import { File } from "expo-file-system";
+import * as ImagePicker from "expo-image-picker";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { router, useLocalSearchParams } from "expo-router";
 import {
@@ -8,6 +10,7 @@ import {
   ChevronRight,
   CircleAlert,
   Crown,
+  ImagePlus,
   Medal,
   RefreshCw,
   Share2,
@@ -17,9 +20,17 @@ import {
   Trophy,
   X,
 } from "lucide-react-native";
-import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ComponentProps,
+} from "react";
 import {
   ActivityIndicator,
+  Alert,
+  Image,
   Modal,
   Pressable,
   ScrollView,
@@ -49,16 +60,19 @@ import {
   createFinal,
   deleteTournamentFixture,
   generateFixtures,
+  getSignedMatchNoteUrl,
   getTournament,
   listActivity,
+  removeMatchNoteImage,
   removeTournamentTeam,
   saveFixtureResult,
   subscribeToTournament,
   type GoalEventInput,
   type TournamentFixture,
 } from "@/src/features/tournaments/api";
+import { getLogoFileType } from "@/src/features/tournaments/logoFile";
 import { useAuth } from "@/src/lib/auth";
-import { supabaseConfigured } from "@/src/lib/supabase";
+import { supabase, supabaseConfigured } from "@/src/lib/supabase";
 import { useThemeRefresh } from "@/src/theme/ThemeContext";
 import { colors, createThemedStyles, radii, spacing } from "@/src/theme/tokens";
 
@@ -86,6 +100,7 @@ const sections: Array<{ id: Section; title: string }> = [
   { id: "teams", title: "Teams" },
   { id: "activity", title: "Activity" },
 ];
+const maxMatchNoteImageBytes = 5 * 1024 * 1024;
 
 export default function TournamentScreen() {
   useThemeRefresh();
@@ -109,6 +124,7 @@ function TournamentContent() {
   const [confirmation, setConfirmation] = useState<Confirmation | null>(null);
   const [goalCelebration, setGoalCelebration] =
     useState<GoalCelebrationState | null>(null);
+  const sectionTouchStart = useRef<{ x: number; y: number } | null>(null);
   const openedFixtureId = useRef<string | null>(null);
   const scoreSnapshot = useRef<{
     tournamentId: string;
@@ -166,6 +182,32 @@ function TournamentContent() {
   const visibleSections = finalFixture
     ? [...sections, { id: "final" as const, title: "Final" }]
     : sections;
+  const selectSection = (nextSection: Section) => {
+    if (selectedFixture) {
+      setSelectedFixture(null);
+      resultMutation.reset();
+    }
+    setSection(nextSection);
+  };
+  const handleSectionSwipe: NonNullable<
+    ComponentProps<typeof ScrollView>["onTouchEnd"]
+  > = (event) => {
+    const touch = event.nativeEvent.changedTouches[0];
+    const start = sectionTouchStart.current;
+    sectionTouchStart.current = null;
+    if (!touch || !start || selectedFixture || section === "table") return;
+    const deltaX = touch.pageX - start.x;
+    const deltaY = touch.pageY - start.y;
+    if (Math.abs(deltaX) < 60 || Math.abs(deltaX) < Math.abs(deltaY) * 1.4) {
+      return;
+    }
+    const currentIndex = visibleSections.findIndex(
+      (item) => item.id === section,
+    );
+    const nextIndex = currentIndex + (deltaX < 0 ? 1 : -1);
+    const nextSection = visibleSections[nextIndex];
+    if (nextSection) selectSection(nextSection.id);
+  };
   const championId = resolveFinalWinner(finalFixture);
 
   useEffect(() => {
@@ -285,8 +327,80 @@ function TournamentContent() {
     },
   });
   const resultMutation = useMutation({
-    mutationFn: saveFixtureResult,
-    onSuccess: async (saved) => {
+    mutationFn: async ({
+      imageAsset,
+      previousNotesImagePath,
+      ...input
+    }: Parameters<typeof saveFixtureResult>[0] & {
+      imageAsset: ImagePicker.ImagePickerAsset | null;
+      previousNotesImagePath: string | null;
+    }) => {
+      let uploadedPath: string | null = null;
+      if (imageAsset) {
+        if (!supabase || !session) {
+          throw new Error("Your session is no longer available. Sign in again.");
+        }
+        const imageFile = new File(imageAsset.uri);
+        if (imageFile.size > maxMatchNoteImageBytes) {
+          throw new Error("Match photos must be 5 MB or smaller.");
+        }
+        const imageBytes = new Uint8Array(await imageFile.arrayBuffer());
+        if (imageBytes.byteLength > maxMatchNoteImageBytes) {
+          throw new Error("Match photos must be 5 MB or smaller.");
+        }
+        const { mimeType, extension } = getLogoFileType(imageBytes);
+        uploadedPath =
+          `${session.user.id}/${input.fixtureId}/` +
+          `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}.${extension}`;
+        const { error } = await supabase.storage
+          .from("match-notes")
+          .upload(uploadedPath, imageBytes, {
+            contentType: mimeType,
+            upsert: false,
+          });
+        if (error) throw error;
+      }
+
+      let saved: Awaited<ReturnType<typeof saveFixtureResult>>;
+      try {
+        saved = await saveFixtureResult({
+          ...input,
+          notesImagePath: imageAsset ? uploadedPath : input.notesImagePath,
+        });
+      } catch (saveError) {
+        if (uploadedPath) {
+          try {
+            await removeMatchNoteImage(uploadedPath);
+          } catch (cleanupError) {
+            const saveMessage =
+              saveError instanceof Error
+                ? saveError.message
+                : "Could not save the match result.";
+            const cleanupMessage =
+              cleanupError instanceof Error
+                ? cleanupError.message
+                : "Could not remove the uploaded photo.";
+            throw new Error(`${saveMessage} ${cleanupMessage}`);
+          }
+        }
+        throw saveError;
+      }
+
+      let cleanupError: string | null = null;
+      if (
+        previousNotesImagePath &&
+        previousNotesImagePath !== saved.notes_image_path
+      ) {
+        try {
+          await removeMatchNoteImage(previousNotesImagePath);
+        } catch (error) {
+          cleanupError =
+            error instanceof Error ? error.message : "Could not delete photo.";
+        }
+      }
+      return { saved, cleanupError };
+    },
+    onSuccess: async ({ saved, cleanupError }) => {
       await queryClient.invalidateQueries({
         queryKey: ["tournament", tournamentId],
       });
@@ -294,6 +408,12 @@ function TournamentContent() {
         queryKey: ["activity", tournamentId],
       });
       await queryClient.invalidateQueries({ queryKey: ["tournaments"] });
+      if (cleanupError) {
+        Alert.alert(
+          "Match saved",
+          `The previous photo could not be deleted: ${cleanupError}`,
+        );
+      }
       setSelectedFixture(null);
       if (
         saved.stage === "final" &&
@@ -439,13 +559,7 @@ function TournamentContent() {
         {visibleSections.map((item) => (
           <Pressable
             key={item.id}
-            onPress={() => {
-              if (selectedFixture) {
-                setSelectedFixture(null);
-                resultMutation.reset();
-              }
-              setSection(item.id);
-            }}
+            onPress={() => selectSection(item.id)}
             style={[styles.tab, section === item.id && styles.tabActive]}
           >
             <Text
@@ -459,7 +573,17 @@ function TournamentContent() {
           </Pressable>
         ))}
       </ScrollView>
-      <ScrollView style={styles.bodyScroll} contentContainerStyle={styles.body}>
+      <ScrollView
+        style={styles.bodyScroll}
+        contentContainerStyle={styles.body}
+        onTouchStart={(event) => {
+          const touch = event.nativeEvent.touches[0];
+          sectionTouchStart.current = touch
+            ? { x: touch.pageX, y: touch.pageY }
+            : null;
+        }}
+        onTouchEnd={handleSectionSwipe}
+      >
         {selectedFixture ? (
           <ResultModal
             fixture={selectedFixture}
@@ -1291,7 +1415,7 @@ function TableSection({
               <Text style={[styles.cell, styles.posCell, styles.headText]}>
                 POS
               </Text>
-              <Text style={[styles.clubCell, styles.headText]}>CLUB</Text>
+              <Text style={[styles.teamCell, styles.headText]}>TEAM</Text>
               {["MP", "W", "D", "L", "GF", "GA", "GD", "PTS", "LAST 5"].map(
                 (label) => (
                   <Text
@@ -1324,13 +1448,13 @@ function TableSection({
                 >
                   {String(row.position).padStart(2, "0")}
                 </Text>
-                <View style={styles.clubCell}>
-                  <View style={styles.smallCrest}>
-                    <Text style={styles.smallCrestText}>
-                      {row.name.slice(0, 1).toUpperCase()}
-                    </Text>
-                  </View>
-                  <Text numberOfLines={1} style={styles.clubName}>
+                <View style={styles.teamCell}>
+                  <TeamCrest
+                    name={row.name}
+                    logoPath={teamById.get(row.id)?.logo_path}
+                    size={24}
+                  />
+                  <Text numberOfLines={1} style={styles.teamName}>
                     {row.name}
                   </Text>
                 </View>
@@ -1570,6 +1694,9 @@ function ResultModal({
     awayScore: number | null;
     goalEvents: GoalEventInput[];
     notes: string;
+    notesImagePath: string | null;
+    imageAsset: ImagePicker.ImagePickerAsset | null;
+    previousNotesImagePath: string | null;
   }) => void;
 }) {
   const [homeScore, setHomeScore] = useState(
@@ -1579,9 +1706,48 @@ function ResultModal({
     fixture.away_score === null ? "" : String(fixture.away_score),
   );
   const [notes, setNotes] = useState(fixture.notes ?? "");
+  const [notesImagePath, setNotesImagePath] = useState(
+    fixture.notes_image_path,
+  );
+  const [imageAsset, setImageAsset] =
+    useState<ImagePicker.ImagePickerAsset | null>(null);
   const [validationError, setValidationError] = useState("");
   const homeName = teamById.get(fixture.home_team_id)?.name ?? "Home";
   const awayName = teamById.get(fixture.away_team_id)?.name ?? "Away";
+  const noteImageQuery = useQuery({
+    queryKey: ["match-note-image", notesImagePath],
+    queryFn: () => getSignedMatchNoteUrl(notesImagePath!),
+    enabled: Boolean(notesImagePath) && !imageAsset,
+    staleTime: 45 * 60 * 1000,
+    retry: 1,
+  });
+  const chooseNoteImage = async () => {
+    try {
+      const permission =
+        await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (!permission.granted) {
+        Alert.alert(
+          "Photo access required",
+          "Allow photo library access to add a match photo.",
+        );
+        return;
+      }
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ["images"],
+        allowsEditing: true,
+        quality: 0.8,
+      });
+      if (!result.canceled) setImageAsset(result.assets[0] ?? null);
+    } catch (error) {
+      Alert.alert(
+        "Could not open photos",
+        error instanceof Error ? error.message : "Please try again.",
+      );
+    }
+  };
+  const visibleImageUri =
+    imageAsset?.uri ?? (notesImagePath ? noteImageQuery.data : undefined);
+  const hasNoteImage = Boolean(imageAsset || notesImagePath);
   const save = () => {
     setValidationError("");
     if (!/^\d+$/.test(homeScore) || !/^\d+$/.test(awayScore)) {
@@ -1618,6 +1784,9 @@ function ResultModal({
       awayScore: awayGoals,
       goalEvents,
       notes,
+      notesImagePath,
+      imageAsset,
+      previousNotesImagePath: fixture.notes_image_path,
     });
   };
   const revert = () =>
@@ -1629,6 +1798,9 @@ function ResultModal({
       awayScore: null,
       goalEvents: [],
       notes,
+      notesImagePath,
+      imageAsset,
+      previousNotesImagePath: fixture.notes_image_path,
     });
 
   return (
@@ -1710,6 +1882,47 @@ function ResultModal({
             <Text style={[styles.label, { marginTop: spacing.lg }]}>
               MATCH NOTES <Text style={styles.optional}>OPTIONAL</Text>
             </Text>
+            <View style={styles.noteActions}>
+              <Pressable
+                accessibilityRole="button"
+                onPress={() => void chooseNoteImage()}
+                style={styles.noteImageButton}
+              >
+                <ImagePlus color={colors.accent} size={16} />
+                <Text style={styles.noteImageButtonText}>
+                  {hasNoteImage ? "Change photo" : "Add photo"}
+                </Text>
+              </Pressable>
+              {hasNoteImage ? (
+                <Pressable
+                  accessibilityRole="button"
+                  onPress={() => {
+                    setImageAsset(null);
+                    setNotesImagePath(null);
+                  }}
+                  style={styles.removeNoteImage}
+                >
+                  <Text style={styles.removeNoteImageText}>Remove photo</Text>
+                </Pressable>
+              ) : null}
+            </View>
+            {visibleImageUri ? (
+              <Image
+                source={{ uri: visibleImageUri }}
+                resizeMode="cover"
+                style={styles.noteImagePreview}
+              />
+            ) : null}
+            {noteImageQuery.isError && notesImagePath && !imageAsset ? (
+              <Pressable
+                accessibilityRole="button"
+                onPress={() => void noteImageQuery.refetch()}
+              >
+                <Text style={styles.error}>
+                  Couldn’t load attached photo. Tap to retry.
+                </Text>
+              </Pressable>
+            ) : null}
             <TextInput
               value={notes}
               onChangeText={setNotes}
@@ -1720,10 +1933,29 @@ function ResultModal({
               style={[styles.input, styles.notesInput]}
             />
           </>
-        ) : notes ? (
+        ) : notes || fixture.notes_image_path ? (
           <View style={styles.readOnlyNotes}>
             <Text style={styles.label}>MATCH NOTES</Text>
-            <Text style={styles.readOnlyNoteText}>{notes}</Text>
+            {noteImageQuery.data ? (
+              <Image
+                source={{ uri: noteImageQuery.data }}
+                resizeMode="cover"
+                style={styles.noteImagePreview}
+              />
+            ) : null}
+            {noteImageQuery.isError ? (
+              <Pressable
+                accessibilityRole="button"
+                onPress={() => void noteImageQuery.refetch()}
+              >
+                <Text style={styles.error}>
+                  Couldn’t load attached photo. Tap to retry.
+                </Text>
+              </Pressable>
+            ) : null}
+            {notes ? (
+              <Text style={styles.readOnlyNoteText}>{notes}</Text>
+            ) : null}
           </View>
         ) : null}
         {validationError || error ? (
@@ -2170,23 +2402,14 @@ const styles = createThemedStyles({
     fontSize: 10,
   },
   posCell: { width: 40 },
-  clubCell: {
+  teamCell: {
     width: 150,
     flexDirection: "row",
     alignItems: "center",
     gap: 7,
     paddingHorizontal: 7,
   },
-  smallCrest: {
-    width: 24,
-    height: 24,
-    borderRadius: 8,
-    backgroundColor: colors.elevated,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  smallCrestText: { color: colors.accent, fontSize: 9, fontWeight: "900" },
-  clubName: { flex: 1, color: colors.text, fontSize: 10, fontWeight: "800" },
+  teamName: { flex: 1, color: colors.text, fontSize: 10, fontWeight: "800" },
   leaderText: { color: colors.accent },
   pointsCell: { color: colors.accent, fontWeight: "900" },
   positive: { color: colors.success },
@@ -2487,6 +2710,41 @@ const styles = createThemedStyles({
     backgroundColor: colors.surface,
     borderRadius: radii.sm,
     padding: spacing.md,
+  },
+  noteActions: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.md,
+    marginBottom: spacing.sm,
+  },
+  noteImageButton: {
+    minHeight: 40,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 7,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radii.sm,
+    paddingHorizontal: spacing.md,
+    backgroundColor: colors.surface,
+  },
+  noteImageButtonText: {
+    color: colors.accent,
+    fontSize: 11,
+    fontWeight: "800",
+  },
+  removeNoteImage: { paddingVertical: 10 },
+  removeNoteImageText: {
+    color: colors.danger,
+    fontSize: 11,
+    fontWeight: "700",
+  },
+  noteImagePreview: {
+    width: "100%",
+    height: 180,
+    borderRadius: radii.sm,
+    marginBottom: spacing.md,
+    backgroundColor: colors.elevated,
   },
   readOnlyNoteText: { color: colors.text, fontSize: 12, lineHeight: 18 },
   modalFooter: {

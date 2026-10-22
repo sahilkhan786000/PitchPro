@@ -16,5 +16,12 @@
       "autoIncrement": true,
       "android": { "buildType": "app-bundle" }
     }
+  },
+  "submit": {
+    "production": {
+      "android": {
+        "track": "internal"
+      }
+    }
   }
 }

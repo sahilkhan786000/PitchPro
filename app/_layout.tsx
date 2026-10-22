@@ -1,4 +1,5 @@
 import { useFonts } from "expo-font";
+import { NavigationBar } from "expo-navigation-bar";
 import {
   DarkTheme,
   DefaultTheme,
@@ -9,6 +10,7 @@ import {
 import * as SplashScreen from "expo-splash-screen";
 import { useEffect } from "react";
 import "react-native-reanimated";
+import { StatusBar } from "expo-status-bar";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { AppPageHeader } from "@/src/components/AppPageHeader";
@@ -72,6 +74,8 @@ function RootLayoutNav() {
 
   return (
     <ThemeProvider value={mode === "dark" ? DarkTheme : DefaultTheme}>
+      <StatusBar style={mode === "dark" ? "light" : "dark"} />
+      <NavigationBar style={mode === "dark" ? "dark" : "light"} />
       <SafeAreaView
         edges={["top"]}
         style={{ flex: 1, backgroundColor: colors.background }}

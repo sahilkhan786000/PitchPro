@@ -7,6 +7,7 @@ The migration history has been replaced with a clean Club-scoped baseline:
 - `supabase/migrations/202610210001_club_hierarchy_baseline.sql` creates the application schema.
 - `supabase/migrations/202610210002_club_scoped_access.sql` enforces Club-first data access.
 - `supabase/migrations/202610210003_club_scoped_notifications.sql` scopes notification reads and read-state changes to the active Club.
+- `supabase/migrations/202610220001_match_note_images.sql` adds private fixture photo notes and owner-authorized image uploads.
 
 Because the previous migration files were removed, an already-migrated test database must be reset before applying this baseline. `npx supabase db reset --linked` is destructive: it drops the linked database's application data and rebuilds it from the current migrations. Use it only for the disposable test project. Do not reset a production project.
 
@@ -18,7 +19,7 @@ Because the previous migration files were removed, an already-migrated test data
 - `tournament_members`: owner/read-only roles; the owner membership is inserted automatically.
 - `tournament_teams`: unique tournament/team participants, frozen after fixture creation.
 - `matchdays`: unique numbered rounds per tournament.
-- `fixtures`: league/final stage, pending/played status, scores, schedule, optimistic version, and stable `played_at`.
+- `fixtures`: league/final stage, pending/played status, scores, schedule, text/photo notes, optimistic version, and stable `played_at`.
 - `goal_events`: scorer, team, minute, and goal type, replaced atomically with a result save.
 - `activity_events`: durable tournament audit timeline; secrets are not included.
 - `notifications`: recipient-specific in-app events with read timestamps.
@@ -40,7 +41,7 @@ Standings include only played `league` fixtures. Ranking order is points, goal d
 - `create_team`: requires Club membership, assigns `owner_id` from `auth.uid()`, and validates logo path ownership.
 - `create_tournament_with_teams`: atomically creates tournament, owner membership, participants, and activity.
 - `generate_league_fixtures`: validates and atomically persists matchdays/fixtures; rejects regeneration.
-- `save_fixture_result`: locks a fixture, checks expected version and owner role, validates scores/goals, writes activity and notification rows, and updates tournament lifecycle for finals.
+- `save_fixture_result_with_image`: saves a fixture result and text/photo notes atomically, while the underlying result RPC checks expected version and owner role, validates scores/goals, writes activity and notification rows, and updates tournament lifecycle for finals.
 - `create_tournament_final`: checks league completion, ranks standings server-side, and creates the unique final.
 - `create_tournament_invite` / `accept_tournament_invite` / `revoke_tournament_invite`: hash one-use tokens and enforce expiry/revocation.
 - `revoke_tournament_member`: lets only the owner remove read-only members.
@@ -48,7 +49,7 @@ Standings include only played `league` fixtures. Ranking order is points, goal d
 
 ## Realtime and Storage
 
-The migration publishes fixtures, activity events, and notifications to `supabase_realtime`. Fixture replica identity is `FULL` so update events include data needed by filters. Team and tournament logos use private Storage buckets with 5 MB limits and authenticated owner-folder policies. The app stores storage paths and requests expiring signed URLs.
+The migration publishes fixtures, activity events, and notifications to `supabase_realtime`. Fixture replica identity is `FULL` so update events include data needed by filters. Team and tournament logos and match-note photos use private Storage buckets with 5 MB limits and authenticated owner policies. Tournament members can read attached match photos through expiring signed URLs; only tournament owners can upload or delete them.
 
 ## Local Development
 

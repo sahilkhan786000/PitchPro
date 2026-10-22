@@ -33,6 +33,7 @@ export interface TournamentFixture {
   home_score: number | null;
   away_score: number | null;
   notes: string | null;
+  notes_image_path: string | null;
   version: number;
   goal_events?: TournamentGoalEvent[];
   matchdays: { round_number: number } | null;
@@ -116,6 +117,21 @@ export async function getSignedLogoUrl(
     .createSignedUrl(path, 60 * 60);
   if (error) throw error;
   return data.signedUrl;
+}
+
+export async function getSignedMatchNoteUrl(path: string) {
+  const client = requireSupabase();
+  const { data, error } = await client.storage
+    .from("match-notes")
+    .createSignedUrl(path, 60 * 60);
+  if (error) throw error;
+  return data.signedUrl;
+}
+
+export async function removeMatchNoteImage(path: string) {
+  const client = requireSupabase();
+  const { error } = await client.storage.from("match-notes").remove([path]);
+  if (error) throw error;
 }
 
 export async function createTeam(
@@ -210,7 +226,7 @@ export async function getTournament(id: string) {
     client
       .from("fixtures")
       .select(
-        "id, tournament_id, matchday_id, home_team_id, away_team_id, stage, status, scheduled_at, played_at, home_score, away_score, notes, version, updated_at, matchdays(round_number)",
+        "id, tournament_id, matchday_id, home_team_id, away_team_id, stage, status, scheduled_at, played_at, home_score, away_score, notes, notes_image_path, version, updated_at, matchdays(round_number)",
       )
       .eq("tournament_id", id),
   ]);
@@ -281,9 +297,10 @@ export async function saveFixtureResult(input: {
   awayScore: number | null;
   goalEvents: GoalEventInput[];
   notes: string;
+  notesImagePath: string | null;
 }) {
   const client = requireSupabase();
-  const { data, error } = await client.rpc("save_fixture_result", {
+  const { data, error } = await client.rpc("save_fixture_result_with_image", {
     p_fixture_id: input.fixtureId,
     p_expected_version: input.expectedVersion,
     p_status: input.status,
@@ -291,6 +308,7 @@ export async function saveFixtureResult(input: {
     p_away_score: input.awayScore,
     p_goal_events: input.goalEvents,
     p_notes: input.notes,
+    p_notes_image_path: input.notesImagePath,
   });
   if (error) throw error;
   return data as TournamentFixture;

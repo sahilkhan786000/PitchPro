@@ -1,5 +1,6 @@
 import { Tabs, usePathname } from "expo-router";
 import { House, Shield, Trophy, UserRound } from "lucide-react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { useAuth } from "@/src/lib/auth";
 import { getClubTabHref, getHomeTabHref } from "@/src/lib/clubTabs";
@@ -9,6 +10,7 @@ import { colors } from "@/src/theme/tokens";
 export default function TabLayout() {
   useThemeRefresh();
   const { club, session } = useAuth();
+  const insets = useSafeAreaInsets();
   const pathname = usePathname();
   const isAuthScreen = [
     "/login",
@@ -26,9 +28,9 @@ export default function TabLayout() {
         tabBarStyle: {
           backgroundColor: colors.background,
           borderTopColor: colors.border,
-          height: 68,
+          height: 68 + insets.bottom,
           paddingTop: 8,
-          paddingBottom: 8,
+          paddingBottom: 8 + insets.bottom,
           display: session && !isAuthScreen ? "flex" : "none",
         },
         tabBarLabelStyle: { fontSize: 10, fontWeight: "700" },
