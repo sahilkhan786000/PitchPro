@@ -546,6 +546,13 @@ function TournamentContent() {
         <Text style={styles.muted}>Loading tournament…</Text>
       </SafeAreaView>
     );
+    /*
+          */}
+        </>
+      ) : null}
+    </SafeAreaView>
+    );
+    */
   if (query.isError || !data)
     return (
       <SafeAreaView style={styles.center} edges={["left", "right", "bottom"]}>
@@ -561,6 +568,14 @@ function TournamentContent() {
         </Pressable>
       </SafeAreaView>
     );
+    /*
+        </Pressable>
+          */}
+        </>
+      ) : null}
+    </SafeAreaView>
+    );
+    */
   const teamById = new Map(data.teams.map((team) => [team.id, team]));
 
   return (
@@ -887,7 +902,8 @@ function TournamentContent() {
         </View>
       </Modal>
       {isOwner ? (
-        <ShareSheet
+        <>
+          <ShareSheet
           tournamentId={tournamentId}
           tournamentName={data.tournament.name}
           visible={shareVisible}
@@ -902,8 +918,11 @@ function TournamentContent() {
           existingTeamIds={existingTeamIds}
           tournamentName={data.tournament.name}
         />
-        <View style={{ display: "none" }}
+        {/*
         />
+      ) : null}
+        */}
+        </>
       ) : null}
     </SafeAreaView>
   );
