@@ -1,4 +1,3 @@
-import { File } from "expo-file-system";
 import * as ImagePicker from "expo-image-picker";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { router, useLocalSearchParams } from "expo-router";
@@ -79,6 +78,7 @@ import {
   type TournamentFixture,
 } from "@/src/features/tournaments/api";
 import { getLogoFileType } from "@/src/features/tournaments/logoFile";
+import { getImageAssetFile } from "@/src/features/tournaments/imageAsset";
 import { useAuth } from "@/src/lib/auth";
 import { supabase, supabaseConfigured } from "@/src/lib/supabase";
 import { useThemeRefresh } from "@/src/theme/ThemeContext";
@@ -404,7 +404,7 @@ function TournamentContent() {
         if (!supabase || !session) {
           throw new Error("Your session is no longer available. Sign in again.");
         }
-        const imageFile = new File(imageAsset.uri);
+        const imageFile = getImageAssetFile(imageAsset);
         if (imageFile.size > maxMatchNoteImageBytes) {
           throw new Error("Match photos must be 5 MB or smaller.");
         }

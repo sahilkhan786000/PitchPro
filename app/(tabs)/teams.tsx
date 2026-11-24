@@ -1,6 +1,5 @@
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { File } from "expo-file-system";
 import * as ImagePicker from "expo-image-picker";
 import {
   Camera,
@@ -36,6 +35,7 @@ import {
   listTeams,
   type TeamRecord,
 } from "@/src/features/tournaments/api";
+import { getImageAssetFile } from "@/src/features/tournaments/imageAsset";
 import { getLogoFileType } from "@/src/features/tournaments/logoFile";
 import { useAuth } from "@/src/lib/auth";
 import { supabase } from "@/src/lib/supabase";
@@ -111,7 +111,7 @@ function TeamsContent() {
               "Your session is no longer available. Sign in again.",
             );
           setUploading(true);
-          const imageFile = new File(asset.uri);
+          const imageFile = getImageAssetFile(asset);
           if (imageFile.size > maxBytes)
             throw new Error("Logo files must be 5 MB or smaller.");
           const imageBytes = new Uint8Array(await imageFile.arrayBuffer());
